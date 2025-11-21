@@ -1,6 +1,8 @@
-# Data Directory – Fluxspace Core
+# Fluxspace Core
 
 Fluxspace Core is the brains of Fluxspace. It handles the raw magnetic sensor data, finds unusual patterns, and turns them into clean, usable maps that highlight potential problem areas. It’s the behind-the-scenes system that makes the insights on Fluxspace possible.
+
+---
 
 This `data/` directory organizes all information flowing through that pipeline, from untouched sensor readings to finalized outputs.
 
@@ -69,3 +71,4 @@ Raw sensor data enters here, is cleaned and analyzed, and is finally exported as
 - Keep sensitive or large real-world datasets out of version control if needed.
 - Use small example files for testing and demonstration purposes.
 - This structure supports reproducibility and clear data provenance.
+
