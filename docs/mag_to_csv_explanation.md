@@ -18,6 +18,7 @@ import os
 import csv
 import time
 import math
+import sys
 from datetime import datetime, timezone
 
 import qwiic_mmc5983ma
@@ -33,6 +34,11 @@ import qwiic_mmc5983ma
    - `csv`: Reading and writing CSV files
    - `time`: Adding delays between sensor readings
    - `math`: Mathematical operations (square root for calculating B_total)
+   - `sys`: System-specific parameters and functions
+     - Used to write error messages to `sys.stderr` (standard error stream)
+     - Separates error output from normal output (stdout)
+     - Allows proper error handling and logging
+     - Important for scripts that might be called by other programs
    - `datetime`: Generating timestamps
 
 3. **External library:**
@@ -473,24 +479,24 @@ Produces an audible beep sound to provide audio feedback after each measurement 
 
 ---
 
-## Section 4: Main Function (Lines 101-157)
+## Section 4: Main Function (Lines 102-159)
 
 ```python
-def main():
+def main() -> int:
     print("\n=== MMC5983MA -> CSV Logger (Point Capture Mode) ===")
     print(f"Output file: {CSV_PATH}")
 
     try:
         ensure_csv_header(CSV_PATH)
     except RuntimeError as e:
-        print(f"ERROR: {e}")
-        return
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
 
     try:
         mag = connect_sensor()
     except Exception as e:
-        print(f"ERROR: {e}")
-        return
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
 
     print(f"Auto-grid enabled: NX={NX}, NY={NY}, DX={DX} m, DY={DY} m")
     print("At each prompt, move the sensor to the point and press Enter.")
@@ -508,13 +514,13 @@ def main():
 
             if user.lower() in ("q", "quit", "exit"):
                 print("Done.")
-                return
+                return 0
 
             print(f"  Sampling {SAMPLES_PER_POINT} readings...")
             try:
                 bx, by, bz = read_avg_xyz_gauss(mag)
             except RuntimeError as e:
-                print(f"  ERROR: {e}")
+                print(f"  ERROR: {e}", file=sys.stderr)
                 print("  Skipping this measurement. You can re-run later for missing points.")
                 continue
 
@@ -524,19 +530,30 @@ def main():
             try:
                 append_row(CSV_PATH, row)
             except RuntimeError as e:
-                print(f"  ERROR: {e}")
-                print("  Measurement taken but could not be saved!")
-                print("  Check disk space and file permissions.")
-                return
+                print(f"  ERROR: {e}", file=sys.stderr)
+                print("  Measurement taken but could not be saved!", file=sys.stderr)
+                print("  Check disk space and file permissions.", file=sys.stderr)
+                return 3
 
+            beep()
             print(f"  Saved: x={x:.2f}, y={y:.2f}, B_total={b_total:.6f} gauss\n")
 
     print("Grid complete. Done.")
+    return 0
 ```
 
 **What it does:**
 
-Runs the interactive data collection loop. Prompts user for coordinates, takes measurements, and saves to CSV.
+Runs the interactive data collection loop. Prompts user for coordinates, takes measurements, and saves to CSV. Returns an integer exit code indicating success or failure.
+
+**Function signature:**
+- **`def main() -> int:`**
+  - `-> int`: Type annotation indicating function returns an integer
+  - Return values:
+    - `0`: Success (normal completion or user quit)
+    - `1`: Sensor connection error
+    - `2`: File access error
+    - `3`: File write error
 
 **Line-by-line breakdown:**
 
@@ -557,8 +574,23 @@ Runs the interactive data collection loop. Prompts user for coordinates, takes m
 5. **`except RuntimeError as e:`**
    - Catches file access errors
 
-6. **`print(f"ERROR: {e}")`** and **`return`**
-   - Prints error and exits function if header creation fails
+6. **`print(f"ERROR: {e}", file=sys.stderr)`** and **`return 2`**
+   - Prints error message to standard error stream (`sys.stderr`)
+   - `file=sys.stderr`: Directs output to error stream instead of normal output
+   - **Why stderr?** Separates errors from normal output, allows proper error handling
+   - **Benefits:**
+     - Errors can be redirected separately: `script.py 2> errors.log`
+     - Other programs can detect errors by checking stderr
+     - Normal output (stdout) stays clean for data processing
+   - Returns exit code 2 (file access error)
+
+**Understanding stdout vs stderr:**
+- **stdout (standard output)**: Normal program output (e.g., status messages, data)
+- **stderr (standard error)**: Error messages and diagnostics
+- **Separation allows:**
+  - Redirecting errors: `python script.py 2> errors.txt`
+  - Redirecting normal output: `python script.py > output.txt`
+  - Redirecting both separately: `python script.py > output.txt 2> errors.txt`
 
 7. **`try:`** (Line 111)
    - Starts error handling for sensor connection
@@ -566,8 +598,10 @@ Runs the interactive data collection loop. Prompts user for coordinates, takes m
 8. **`mag = connect_sensor()`**
    - Connects to sensor and gets sensor object
 
-9. **`except Exception as e:`** and **`return`**
-   - If connection fails, prints error and exits
+9. **`except Exception as e:`** and **`return 1`**
+   - If connection fails, prints error to stderr and exits
+   - **`print(f"ERROR: {e}", file=sys.stderr)`**: Error message goes to stderr
+   - Returns exit code 1 (sensor connection error)
 
 **Grid Setup (Lines 117-119):**
 
@@ -726,8 +760,9 @@ Y
 18. **`if user.lower() in ("q", "quit", "exit"):`**
     - Checks if user wants to quit early (case-insensitive)
 
-19. **`print("Done.")`** and **`return`**
+19. **`print("Done.")`** and **`return 0`**
     - Prints message and exits function (not just loop)
+    - Returns exit code 0 (success - user chose to quit)
 
 20. **`print(f"  Sampling {SAMPLES_PER_POINT} readings...")`**
     - Status message showing how many samples will be taken
@@ -738,12 +773,14 @@ Y
 22. **`bx, by, bz = read_avg_xyz_gauss(mag)`**
     - Takes N samples and gets averaged magnetic field components
 
-23. **`except RuntimeError as e:`** (Line 138)
+23. **`except RuntimeError as e:`** (Line 139)
     - Catches sensor read errors
 
-24. **`print(f"  ERROR: {e}")`** and **`continue`**
-    - Prints error and skips to next grid point (doesn't crash)
+24. **`print(f"  ERROR: {e}", file=sys.stderr)`** and **`continue`**
+    - Prints error message to stderr
+    - Skips to next grid point (doesn't crash)
     - Note: User can re-run script later to fill in missing points
+    - Uses stderr so error doesn't mix with normal status messages
 
 25. **`b_total = math.sqrt(bx * bx + by * by + bz * bz)`**
     - Calculates total magnitude using 3D Pythagorean theorem
@@ -765,11 +802,16 @@ Y
 28. **`append_row(CSV_PATH, row)`**
     - Appends row to CSV file
 
-29. **`except RuntimeError as e:`** (Line 148)
+29. **`except RuntimeError as e:`** (Line 149)
     - Catches file write errors (disk full, permissions, etc.)
 
-30. **`print(...)`** and **`return`**
-    - Warns user and exits function (critical error - can't save data)
+30. **`print(f"  ERROR: {e}", file=sys.stderr)`** and **`return 3`**
+    - Prints error message to stderr
+    - **`print("  Measurement taken but could not be saved!", file=sys.stderr)`**
+    - **`print("  Check disk space and file permissions.", file=sys.stderr)`**
+    - All error messages go to stderr for proper error handling
+    - Returns exit code 3 (file write error)
+    - Critical error - can't save data, so script exits
 
 31. **`beep()`** (Line 154)
     - Produces an audible beep sound to confirm data was saved
@@ -786,39 +828,69 @@ Y
 33. **`print("Grid complete. Done.")`**
     - Message when all grid points have been processed
 
+34. **`return 0`** (Line 159)
+    - Returns exit code 0 (success - grid completed)
+
 ---
 
-## Section 5: Script Entry Point (Lines 160-165)
+## Section 5: Script Entry Point (Lines 162-169)
 
 ```python
 if __name__ == "__main__":
+    # Only runs when this file is executed directly (not imported)
     try:
-        main()
+        raise SystemExit(main())
     except KeyboardInterrupt:
-        print("\nStopped.")
+        print("\nStopped.", file=sys.stderr)
+        raise SystemExit(130)
 ```
 
 **What it does:**
 
-Runs the main function when the script is executed directly. Handles Ctrl+C gracefully.
+Runs the main function when the script is executed directly. Handles Ctrl+C gracefully and ensures proper exit codes.
 
 **Line-by-line breakdown:**
 
 1. **`if __name__ == "__main__":`**
    - Only runs if script is executed directly (not imported as module)
    - Python best practice
+   - Comment clarifies this behavior
 
 2. **`try:`**
    - Starts error handling block
 
-3. **`main()`**
-   - Calls the main function
+3. **`raise SystemExit(main())`**
+   - Calls main function and raises SystemExit with its return value
+   - **Why SystemExit?** Ensures proper exit code propagation
+   - **Exit codes:**
+     - `0`: Success
+     - `1`: Sensor connection error
+     - `2`: File access error
+     - `3`: File write error
+   - Other programs can check exit code to detect errors
 
 4. **`except KeyboardInterrupt:`**
-   - Catches Ctrl+C interrupt signal
+   - Catches Ctrl+C interrupt signal (user presses Ctrl+C)
 
-5. **`print("\nStopped.")`**
-   - Prints graceful exit message instead of showing Python error
+5. **`print("\nStopped.", file=sys.stderr)`**
+   - Prints graceful exit message to stderr
+   - Uses stderr so message is clearly an interrupt, not normal output
+
+6. **`raise SystemExit(130)`**
+   - Exits with code 130 (standard exit code for SIGINT/Ctrl+C)
+   - Allows calling programs to detect that script was interrupted
+
+**Understanding exit codes:**
+- **0**: Success - script completed normally
+- **1**: Sensor connection failed
+- **2**: File access error (can't read/write CSV)
+- **3**: File write error (can't save data)
+- **130**: Interrupted by user (Ctrl+C)
+
+**Why use exit codes?**
+- Allows automation: `if python script.py; then echo "Success"; fi`
+- Error detection: Check exit code to know if script failed
+- Integration: Other programs can react to different error types
 
 ---
 
@@ -849,6 +921,46 @@ The script automatically generates a grid of measurement points based on configu
 - Can quit early and resume later (missing points can be filled in)
 
 **Note:** The script still supports early exit with 'q', allowing you to resume data collection later for any missing points.
+
+### Standard Output vs Standard Error (stdout vs stderr)
+
+The script uses `sys.stderr` for error messages to separate them from normal output. This is a best practice for command-line programs.
+
+**What are stdout and stderr?**
+- **stdout (standard output)**: Normal program output
+  - Status messages: "Sampling 100 readings..."
+  - Success messages: "Saved: x=0.00, y=0.00..."
+  - Progress information
+- **stderr (standard error)**: Error messages and diagnostics
+  - Error messages: "ERROR: Cannot access file..."
+  - Warnings: "Measurement taken but could not be saved!"
+  - Interrupt messages: "Stopped."
+
+**Why separate them?**
+1. **Error detection**: Programs can check stderr to detect errors
+2. **Output redirection**: Can redirect errors and normal output separately
+3. **Logging**: Errors can be logged separately from normal output
+4. **Automation**: Scripts can distinguish between data and errors
+
+**Examples of redirection:**
+```bash
+# Redirect only errors to a file
+python mag_to_csv.py 2> errors.log
+
+# Redirect normal output to a file
+python mag_to_csv.py > output.txt
+
+# Redirect both separately
+python mag_to_csv.py > output.txt 2> errors.log
+
+# Discard errors (send to /dev/null)
+python mag_to_csv.py 2> /dev/null
+```
+
+**In the script:**
+- Normal messages: `print("Sampling...")` → goes to stdout
+- Error messages: `print("ERROR: ...", file=sys.stderr)` → goes to stderr
+- This allows proper error handling and logging
 
 ### Averaging for Noise Reduction
 

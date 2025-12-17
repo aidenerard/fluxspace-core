@@ -3,6 +3,7 @@ import os
 import csv
 import time
 import math
+import sys
 from datetime import datetime, timezone
 
 import qwiic_mmc5983ma
@@ -98,21 +99,21 @@ def beep():
     print("\a", end="", flush=True)  # ASCII bell
 
 
-def main():
+def main() -> int:
     print("\n=== MMC5983MA -> CSV Logger (Point Capture Mode) ===")
     print(f"Output file: {CSV_PATH}")
 
     try:
         ensure_csv_header(CSV_PATH)
     except RuntimeError as e:
-        print(f"ERROR: {e}")
-        return
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
 
     try:
         mag = connect_sensor()
     except Exception as e:
-        print(f"ERROR: {e}")
-        return
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
 
     print(f"Auto-grid enabled: NX={NX}, NY={NY}, DX={DX} m, DY={DY} m")
     print("At each prompt, move the sensor to the point and press Enter.")
@@ -130,13 +131,13 @@ def main():
 
             if user.lower() in ("q", "quit", "exit"):
                 print("Done.")
-                return
+                return 0
 
             print(f"  Sampling {SAMPLES_PER_POINT} readings...")
             try:
                 bx, by, bz = read_avg_xyz_gauss(mag)
             except RuntimeError as e:
-                print(f"  ERROR: {e}")
+                print(f"  ERROR: {e}", file=sys.stderr)
                 print("  Skipping this measurement. You can re-run later for missing points.")
                 continue
 
@@ -146,20 +147,22 @@ def main():
             try:
                 append_row(CSV_PATH, row)
             except RuntimeError as e:
-                print(f"  ERROR: {e}")
-                print("  Measurement taken but could not be saved!")
-                print("  Check disk space and file permissions.")
-                return
+                print(f"  ERROR: {e}", file=sys.stderr)
+                print("  Measurement taken but could not be saved!", file=sys.stderr)
+                print("  Check disk space and file permissions.", file=sys.stderr)
+                return 3
 
             beep()
             print(f"  Saved: x={x:.2f}, y={y:.2f}, B_total={b_total:.6f} gauss\n")
 
     print("Grid complete. Done.")
+    return 0
 
 
 if __name__ == "__main__":
     # Only runs when this file is executed directly (not imported)
     try:
-        main()
+        raise SystemExit(main())
     except KeyboardInterrupt:
-        print("\nStopped.")
+        print("\nStopped.", file=sys.stderr)
+        raise SystemExit(130)
