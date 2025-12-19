@@ -167,7 +167,7 @@ def main() -> int:
         print(f"ERROR: could not write output CSV: {e}", file=sys.stderr)
         return 3
 
-    print(f"✅ Wrote anomaly CSV: {outpath}")
+    print(f"Wrote anomaly CSV: {outpath}")
 
     # Plot (optional)
     if args.plot:
@@ -193,7 +193,7 @@ def main() -> int:
             plot_out.parent.mkdir(parents=True, exist_ok=True)
             plt.savefig(plot_out, dpi=160)
             plt.close()
-            print(f"✅ Wrote plot PNG: {plot_out}")
+            print(f"Wrote plot PNG: {plot_out}")
         else:
             plt.show()
 

@@ -467,7 +467,7 @@ def main() -> int:
         print(f"ERROR: could not write output CSV: {e}", file=sys.stderr)
         return 3
 
-    print(f"✅ Wrote anomaly CSV: {outpath}")
+    print(f"Wrote anomaly CSV: {outpath}")
 
     # Plot (optional)
     if args.plot:
@@ -493,7 +493,7 @@ def main() -> int:
             plot_out.parent.mkdir(parents=True, exist_ok=True)
             plt.savefig(plot_out, dpi=160)
             plt.close()
-            print(f"✅ Wrote plot PNG: {plot_out}")
+            print(f"Wrote plot PNG: {plot_out}")
         else:
             plt.show()
 
@@ -625,6 +625,46 @@ Main entry point that orchestrates the anomaly computation pipeline. Handles fil
 30. **`else:`** and **`df["local_anomaly_norm"] = 0.0`**
     - If all anomalies are zero, set normalized to 0.0
 
+**Example:** Normalizing local magnetic anomalies
+
+Assume the local anomaly calculation produces these values (gauss):
+
+local_anomaly:
+- `[-0.003, 0.001, 0.020, -0.002, 0.004]`
+
+**Step 1: Find the maximum absolute anomaly**
+
+Absolute values:
+- `[0.003, 0.001, 0.020, 0.002, 0.004]`
+
+`max_abs = 0.020 gauss`
+
+**Step 2: Normalize anomalies**
+
+local_anomaly_norm = local_anomaly / max_abs
+
+**Result:**
+- `[-0.15, 0.05, 1.00, -0.10, 0.20]`
+
+**Interpretation:**
+- The strongest positive anomaly becomes +1.0
+- The strongest negative anomaly would be -1.0 (if present)
+- All values are now constrained to the range [-1, +1]
+
+**Why this is useful:**
+- Heatmaps use a consistent color scale regardless of absolute field strength
+- Different test runs can be compared visually
+- Thresholds can be expressed in relative terms (e.g., |norm| > 0.6)
+
+**Edge case:**
+If all anomalies were zero:
+- `local_anomaly = [0.0, 0.0, 0.0]`
+then:
+- `max_abs = 0`
+and the script safely sets:
+- `local_anomaly_norm = 0.0`
+to avoid division by zero.
+
 **Output File Handling (Lines 158-168):**
 
 31. **`if args.out is None:`**
@@ -640,7 +680,7 @@ Main entry point that orchestrates the anomaly computation pipeline. Handles fil
     - Saves DataFrame to CSV
     - **`index=False`**: Don't save row numbers
 
-34. **`print(f"✅ Wrote anomaly CSV: {outpath}")`**
+34. **`print(f"Wrote anomaly CSV: {outpath}")`**
     - Success message
 
 **Plotting (Lines 172-198):**
@@ -781,7 +821,7 @@ Point C: B=55 (in high region, but also local hot spot)
 ```
 Grid with spacing 0.2 m:
   A   B   C
-  D [E]  F    ← Point E at center
+  D  [E]  F    ← Point E at center
   G   H   I
 
 Radius = 0.2 m:
@@ -892,9 +932,10 @@ Y
 0.4 ┌─────┬─────┬─────┐
     │ 50.0│ 50.5│ 49.8│
 0.2 ├─────┼─────┼─────┤
-    │ 49.5│[52.5]│ 50.0│  ← Point (0.2, 0.2) with B=52.5
-0.0 └─────┴─────┴─────┘
-      50.0  51.0  50.5
+    │ 49.5│ 52.5│ 50.0│  ← Point (0.2, 0.2) with B=52.5
+0.0 |─────|─────|─────|
+    | 50.0| 51.0| 50.5|
+    |_____|_____|_____|
     0.0   0.2   0.4    → X
 ```
 
@@ -950,7 +991,7 @@ Y
     0.0   0.0   0.0   0.0   0.0   0.0   0.0   0.0   0.0
     0.0   0.0   0.0   0.0   0.0   0.0   0.0   0.0   0.0
     0.0   0.0   0.0   0.0   0.0   0.0   0.0   0.0   0.0
-    0.0   0.0   0.0   0.0 [+2.4] 0.0   0.0   0.0   0.0  ← Detected!
+    0.0   0.0   0.0   0.0  [+2.4] 0.0   0.0   0.0   0.0  ← Detected!
     0.0   0.0   0.0   0.0   0.0   0.0   0.0   0.0   0.0
     0.0   0.0   0.0   0.0   0.0   0.0   0.0   0.0   0.0
     0.0   0.0   0.0   0.0   0.0   0.0   0.0   0.0   0.0
@@ -971,9 +1012,10 @@ Y
 0.4 ┌─────┬─────┬─────┐
     │  A  │  B  │  C  │
 0.2 ├─────┼─────┼─────┤
-    │  D  │[E]  │  F  │  ← Point E at (0.2, 0.2)
-0.0 └─────┴─────┴─────┘
-      G     H     I
+    │  D  │ [E] │  F  │  ← Point E at (0.2, 0.2)
+0.0 |─────|─────|─────|
+    |  G  |  H  |  I  |
+    |_____|_____|_____|
    0.0   0.2   0.4    → X
 ```
 

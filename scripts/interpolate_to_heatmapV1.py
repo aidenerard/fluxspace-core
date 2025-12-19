@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-interpolate_to_grid.py
+interpolate_to_heatmapv1.py
 
 Takes scattered points (x, y, value) and interpolates them onto a regular grid,
 then exports:
@@ -10,15 +10,15 @@ then exports:
 Designed for your pipeline:
   validate_and_diagnostics.py  -> *_clean.csv
   compute_local_anomaly_v2.py  -> *_anomaly.csv
-  interpolate_to_grid.py       -> grid + heatmap
+  interpolate_to_heatmapv1.py  -> grid + heatmap
 
 Default interpolation: IDW (Inverse Distance Weighting) with a tunable power.
 
 Example:
-  python3 interpolate_to_grid.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
+  python3 interpolate_to_heatmapv1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 
 If your x/y are in meters and your grid spacing is 0.20 m:
-  python3 interpolate_to_grid.py --in ... --grid-step 0.05
+  python3 interpolate_to_heatmapv1.py --in ... --grid-step 0.05
 
 Notes:
 - This is a lightweight interpolator (no SciPy required).
@@ -204,8 +204,8 @@ def main() -> int:
         print(f"ERROR: could not save heatmap PNG: {e}", file=sys.stderr)
         return 3
 
-    print(f"✅ Wrote grid CSV:   {grid_csv}")
-    print(f"✅ Wrote heatmap:    {heatmap_png}")
+    print(f"Wrote grid CSV:   {grid_csv}")
+    print(f"Wrote heatmap:    {heatmap_png}")
     return 0
 
 
