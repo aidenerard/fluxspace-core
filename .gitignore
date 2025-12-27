@@ -1,1 +1,41 @@
+# =========================
+# OS / Editor noise
+# =========================
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# =========================
+# Fluxspace generated data (DON'T COMMIT)
+# =========================
+# All timestamped runs
+data/runs/
+
+# Ignore everything under data/ (generated), but keep folder structure via .gitkeep files
+data/**
+!data/**/.gitkeep
+
+# Default pipeline outputs (if a script writes here)
+data/raw/*.csv
+data/processed/*.csv
+data/processed/*.txt
+data/processed/*.png
+
+# Any exports you generate (optional: ignore whole folder)
+data/exports/
+
+# If you ever generate logs
+logs/
+*.log
