@@ -10,32 +10,26 @@ Thumbs.db
 # Python
 # =========================
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 .venv/
 venv/
 env/
+.pytest_cache/
+.mypy_cache/
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
 
 # =========================
 # Fluxspace generated data (DON'T COMMIT)
+# - ignore all data outputs
+# - keep folder structure via .gitkeep
 # =========================
-# All timestamped runs
-data/runs/
-
-# Ignore everything under data/ (generated), but keep folder structure via .gitkeep files
 data/**
 !data/**/.gitkeep
 
-# Default pipeline outputs (if a script writes here)
-data/raw/*.csv
-data/processed/*.csv
-data/processed/*.txt
-data/processed/*.png
-
-# Any exports you generate (optional: ignore whole folder)
-data/exports/
-
-# If you ever generate logs
-logs/
-*.log
+# (Optional) if you ever want a small committed example dataset later:
+# !data/examples/**

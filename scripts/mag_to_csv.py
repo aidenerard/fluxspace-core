@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import qwiic_mmc5983ma
 
 
-CSV_PATH = "mag_data.csv"
+CSV_PATH = "data/raw/mag_data.csv"
 
 # Point-capture settings (tweak anytime)
 SAMPLES_PER_POINT = 100        # how many samples to average per grid point
@@ -17,10 +17,10 @@ SAMPLE_DELAY_S = 0.01          # delay between samples (0.01s = ~100 Hz loop)
 
 # ---- GRID SETTINGS ----
 # 5x5 ft ≈ 1.52 m. With 0.20 m spacing, use 9 points per side (~1.60 m span).
-DX = 0.20   # meters between points in x
-DY = 0.20   # meters between points in y
-NX = 9      # number of points in x direction
-NY = 9      # number of points in y direction
+DX = 0.05   # meters between points in x
+DY = 0.05   # meters between points in y
+NX = 6      # number of points in x direction
+NY = 6      # number of points in y direction
 X0 = 0.0    # starting x (meters)
 Y0 = 0.0    # starting y (meters)
 # ------------------------------------------
