@@ -1,4 +1,4 @@
-# Complete Explanation of `interpolate_to_heatmapV1.py`
+# Complete Explaation of `interpolate_to_heatmapV1.py`
 
 This document explains every part of the interpolation and heatmap generation script, step by step.
 

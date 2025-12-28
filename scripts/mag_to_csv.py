@@ -19,8 +19,8 @@ SAMPLE_DELAY_S = 0.01          # delay between samples (0.01s = ~100 Hz loop)
 # 5x5 ft ≈ 1.52 m. With 0.20 m spacing, use 9 points per side (~1.60 m span).
 DX = 0.05   # meters between points in x
 DY = 0.05   # meters between points in y
-NX = 6      # number of points in x direction
-NY = 6      # number of points in y direction
+NX = 5      # number of points in x direction
+NY = 5      # number of points in y direction
 X0 = 0.0    # starting x (meters)
 Y0 = 0.0    # starting y (meters)
 # ------------------------------------------

@@ -165,6 +165,8 @@ python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.c
 - `<stem>_grid.csv` - Regular grid with interpolated values
 - `<stem>_heatmap.png` - Visual heatmap
 
+**Detailed Documentation:** [`compute_local_anomaly_v2_explanation.md`](./interpolate_to_heatmap.md)
+
 **Example Usage:**
 ```bash
 python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
