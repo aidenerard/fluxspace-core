@@ -17,7 +17,7 @@ Single copy/paste runbook you can reuse forever.
 
 If you already know the IP:
 ```bash
-ssh fluxspace@192.168.1.213
+ssh fluxspace-pi
 ```
 
 If you don’t know the IP:
