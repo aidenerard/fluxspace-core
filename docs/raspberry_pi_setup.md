@@ -1,4 +1,8 @@
-# Fluxspace Core — Raspberry Pi Setup + Logging & Testing Runbook (MMC5983MA)
+# Fluxspace Core — Raspberry Pi Setup + Testing Runbook (MMC5983MA)
+
+Complete guide covering:
+- **One-time setup**: Hardware, software, and environment configuration
+- **Test runs**: Step-by-step pipeline execution and verification
 
 Single copy/paste runbook you can reuse forever.
 
@@ -158,6 +162,11 @@ cd ~/fluxspace-core
 source ~/fluxenv/bin/activate
 ```
 
+(Optional sanity check to verify environment):
+```bash
+python -c "import numpy,pandas,matplotlib; print('env ok')"
+```
+
 ---
 
 ## Part D — Sensor bring‑up / sanity checks
@@ -192,11 +201,20 @@ This script is **auto‑grid + press Enter**:
 - Yes: you move the magnetometer to each grid point
 - Keep **height + orientation constant**
 - Press **Enter** at each point to capture
-- It repeats until “Grid complete”
+- It repeats until "Grid complete"
 
-Run:
+Basic run:
 ```bash
-python3 scripts/mag_to_csv.py
+python3 scripts/mag_to_csv.py --out data/raw/mag_data.csv
+```
+
+If your acquisition script supports grid + averaging options:
+```bash
+# Fixed grid size (e.g., 9×9)
+python3 scripts/mag_to_csv.py --out data/raw/mag_data.csv --grid-n 9 --samples 100
+
+# Fixed grid spacing (e.g., 5cm spacing)
+python3 scripts/mag_to_csv.py --out data/raw/mag_data.csv --grid-step 0.05 --samples 100
 ```
 
 Expected output:
@@ -208,6 +226,11 @@ Expected output:
 Run:
 ```bash
 python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
+```
+
+If you want to explicitly drop flagged outliers:
+```bash
+python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv --drop-outliers
 ```
 
 Expected outputs:
@@ -226,22 +249,39 @@ Run:
 python3 scripts/compute_local_anomaly_v2.py   --in data/processed/mag_data_clean.csv   --radius 0.10   --plot
 ```
 
+If you want to drop rows where `_flag_any` is true (if present):
+```bash
+python3 scripts/compute_local_anomaly_v2.py   --in data/processed/mag_data_clean.csv   --radius 0.10   --drop-flag-any   --plot
+```
+
 Expected output:
 - `data/processed/mag_data_anomaly.csv`
 
 ---
 
 ### E4. Heatmap interpolation
-IMPORTANT: anomaly output is **mag_data_anomaly.csv** (not “clean_anomaly”).
+IMPORTANT: anomaly output is **mag_data_anomaly.csv** (not "clean_anomaly").
 
-Run:
+If your anomaly CSV contains `local_anomaly_norm`:
+```bash
+python3 scripts/interpolate_to_heatmapV1.py   --in data/processed/mag_data_anomaly.csv   --value-col local_anomaly_norm
+```
+
+If it only contains `local_anomaly`:
+```bash
+python3 scripts/interpolate_to_heatmapV1.py   --in data/processed/mag_data_anomaly.csv   --value-col local_anomaly
+```
+
+With custom grid spacing:
 ```bash
 python3 scripts/interpolate_to_heatmapV1.py   --in data/processed/mag_data_anomaly.csv   --value-col local_anomaly   --grid-step 0.01
 ```
 
-Expected outputs (depends on your script defaults):
-- grid CSV (usually `data/exports/*grid*.csv`)
-- heatmap PNG (usually `data/exports/*heatmap*.png`)
+**Note:** Output files now default to `data/exports/` automatically (no need for `--out-dir` when input is in `data/processed/`).
+
+Expected outputs:
+- `data/exports/<stem>_grid.csv`
+- `data/exports/<stem>_heatmap.png`
 
 Confirm what you got:
 ```bash
@@ -270,19 +310,59 @@ Expected result:
 
 ---
 
+## Part E6 — Quick "it worked" checklist
+
+After completing the pipeline (E1 → E4), verify all outputs exist:
+
+```bash
+ls -lh data/raw data/processed data/exports
+```
+
+You should see:
+- A fresh raw CSV in `data/raw/`
+- A `*_clean.csv` and `*_anomaly.csv` in `data/processed/`
+- A `*_heatmap.png` and `*_grid.csv` in `data/exports/`
+
+---
+
 ## Part F — Standard test plan (proves it works)
 
-Do TWO runs:
+Do TWO runs to establish baseline and detect anomalies:
 
 ### F1. Baseline run
-- cardboard only
-- no nearby metal
-- run the full pipeline (E1 → E4)
+- Cardboard only
+- No nearby metal
+- Run the full pipeline (E1 → E4)
+- This establishes your "normal" magnetic field
 
 ### F2. Stimulus run (introduce metal)
-- place steel/rebar near/under board
-- rerun the same grid pattern
-- compare heatmaps + anomaly CSV
+- Place steel/rebar near/under board
+- Rerun the same grid pattern
+- Compare heatmaps + anomaly CSV
+- The difference between baseline and stimulus shows the metal's effect
+
+### F3. Suggested 2D bench test protocol
+
+For a controlled test environment:
+
+1. **Setup:**
+   - Place the sensor at a fixed height above the surface (consistent Z)
+   - Use a tape measure and mark a small grid (e.g., 9×9)
+   - Ensure consistent sensor orientation throughout
+
+2. **Baseline measurement:**
+   - Collect data **without metal** first (baseline)
+   - Run full pipeline (E1 → E4)
+
+3. **Stimulus measurement:**
+   - Add a known magnet/metal object at a specific location
+   - Repeat the same grid pattern
+   - Run full pipeline (E1 → E4)
+
+4. **Compare results:**
+   - Check clean stats + flags (should show differences)
+   - Compare anomaly maps (should highlight metal location)
+   - Compare heatmap PNGs (visual difference should be clear)
 
 ---
 
@@ -295,16 +375,41 @@ cd ~/fluxspace-core
 mkdir -p data/raw data/processed data/exports data/runs
 ```
 
-### G2. Heatmap says "input file not found"
+### G2. "Module not found" (numpy/pandas/matplotlib)
+You forgot to activate/install in the venv:
+```bash
+source ~/fluxenv/bin/activate
+pip install numpy pandas matplotlib
+```
+
+### G3. "File not found" when a script reads input
+Double-check your filenames:
+```bash
+ls data/raw
+ls data/processed
+```
+Make sure you're using the correct output filename from the previous step.
+
+### G4. Heatmap says "input file not found"
 Use the correct filename from anomaly step:
 - Correct: `data/processed/mag_data_anomaly.csv`
+- Wrong: `data/processed/mag_data_clean.csv` (this is from step E2, not E3)
 
-### G3. Do I need to push to GitHub before running?
+### G5. `.local` / hostname issues when reconnecting
+On some networks, `pi.local` won't resolve. Use IP instead:
+```bash
+# Find Pi IP on your network
+sudo nmap -sn 192.168.1.0/24
+# Then SSH using the IP
+ssh fluxspace@<pi-ip>
+```
+
+### G6. Do I need to push to GitHub before running?
 No.
 - You can run anything that exists on the Pi immediately.
 - GitHub is only for syncing between machines.
 
-### G4. If you add files on the Pi, will they appear on your Mac automatically?
+### G7. If you add files on the Pi, will they appear on your Mac automatically?
 No.
 - Pi + Mac are separate clones.
 - To sync: commit/push from one machine, then pull on the other.
@@ -344,23 +449,31 @@ Wait ~20 seconds, then unplug power.
 
 ---
 
-## Part J — One-command “full pipeline” (copy/paste)
+## Part J — One-command "full pipeline" (copy/paste)
+
+Complete pipeline from start to finish:
 
 ```bash
 cd ~/fluxspace-core
 source ~/fluxenv/bin/activate
 mkdir -p data/raw data/processed data/exports data/runs
 
+# Optional: verify sensor is detected
 i2cdetect -y 1
 
-python3 scripts/mag_to_csv.py
+# Step 1: Collect data
+python3 scripts/mag_to_csv.py --out data/raw/mag_data.csv
 
+# Step 2: Validate and clean
 python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
 
+# Step 3: Compute anomalies
 python3 scripts/compute_local_anomaly_v2.py   --in data/processed/mag_data_clean.csv   --radius 0.10   --plot
 
-python3 scripts/interpolate_to_heatmapV1.py   --in data/processed/mag_data_anomaly.csv   --value-col local_anomaly   --grid-step 0.01
+# Step 4: Generate heatmap (outputs to data/exports/ automatically)
+python3 scripts/interpolate_to_heatmapV1.py   --in data/processed/mag_data_anomaly.csv   --value-col local_anomaly
 
+# Step 5: Organize run data
 ./tools/new_run.sh
 
 ls data/raw

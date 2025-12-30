@@ -1,6 +1,28 @@
-# Complete Explaation of `interpolate_to_heatmapV1.py`
+# Complete Explanation of `interpolate_to_heatmapV1.py`
 
 This document explains every part of the interpolation and heatmap generation script, step by step.
+
+---
+
+## ⚠️ Recent Changes
+
+**Key updates to the script:**
+
+1. **Output Directory Default Changed** ⚠️ **IMPORTANT**
+   - **Previous behavior**: Output files were written to the same directory as the input file
+   - **New behavior**: Output files default to `data/exports/` when input is in a path containing `data`
+   - **Example**: Input `data/processed/file.csv` → Output `data/exports/file_grid.csv` (automatically)
+   - You can still override with `--out-dir` if needed
+
+2. **Argument name change**
+   - `--outdir` → `--out-dir` (now uses hyphen for consistency)
+
+3. **New `--no-plot` option**
+   - Skip PNG heatmap generation if you only need the CSV grid data
+
+4. **Improved code organization**
+   - New `resolve_outdir()` function for output directory logic
+   - Better error messages and code structure
 
 ---
 
@@ -18,13 +40,18 @@ This script takes scattered measurement points (x, y, value) from a CSV file and
 
 **Typical usage:**
 ```bash
+# Basic usage (outputs to data/exports/ by default)
 python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
+
+# Custom grid spacing
 python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --grid-step 0.05 --power 2.5
 ```
 
-**Outputs:**
+**Outputs:** ⚠️ **CHANGED: Default output location**
 - `<stem>_grid.csv` - Regular grid with interpolated values (x, y, value format)
-- `<stem>_heatmap.png` - Visual heatmap image
+  - **Default location**: `data/exports/` (when input is in `data/processed/`)
+- `<stem>_heatmap.png` - Visual heatmap image (optional with `--no-plot`)
+  - **Default location**: `data/exports/` (when input is in `data/processed/`)
 
 ---
 
@@ -37,25 +64,25 @@ interpolate_to_heatmapv1.py
 
 Takes scattered points (x, y, value) and interpolates them onto a regular grid,
 then exports:
-  - <stem>_grid.csv          (x,y,value on a grid)
+  - <stem>_grid.csv          (x,y,value on a grid, long-form table)
   - <stem>_heatmap.png       (quick preview)
 
 Designed for your pipeline:
   validate_and_diagnostics.py  -> *_clean.csv
   compute_local_anomaly_v2.py  -> *_anomaly.csv
-  interpolate_to_heatmapv1.py       -> grid + heatmap
+  interpolate_to_heatmapv1.py  -> grid + heatmap
 
 Default interpolation: IDW (Inverse Distance Weighting) with a tunable power.
 
 Example:
   python3 interpolate_to_heatmapv1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 
-If your x/y are in meters and your grid spacing is 0.20 m:
+If your x/y are in meters and you want 0.05 m grid spacing:
   python3 interpolate_to_heatmapv1.py --in ... --grid-step 0.05
 
 Notes:
-- This is a lightweight interpolator (no SciPy required).
-- For dense grids over large datasets, IDW can be slow (O(N * grid_points)).
+- Lightweight interpolator (no SciPy required).
+- For dense grids over large datasets, naive IDW can be slow (O(N * grid_points)).
   For your 9x9 or 20x20 tests, it's totally fine.
 """
 
@@ -99,26 +126,72 @@ import matplotlib.pyplot as plt
 
 ---
 
-## Section 2: Command-Line Arguments (Lines 41-56)
+## Section 2: Command-Line Arguments (Lines 44-105)
 
-### Function: `parse_args()` (Lines 41-56)
+### Function: `parse_args()` (Lines 44-105)
 
 ```python
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Interpolate scattered x,y,value points to a grid and save heatmap.")
-    p.add_argument("--in", dest="infile", required=True, help="Input CSV (e.g., data/processed/mag_data_anomaly.csv)")
-    p.add_argument("--value-col", default="local_anomaly", help="Column to grid (default: local_anomaly)")
-    p.add_argument("--outdir", default=None, help="Output directory (default: same as input)")
-    p.add_argument("--grid-step", type=float, default=None,
-                   help="Grid spacing in same units as x/y (e.g., 0.05). If omitted, uses --grid-n.")
-    p.add_argument("--grid-n", type=int, default=200,
-                   help="Grid resolution per axis if --grid-step not given (default: 200)")
-    p.add_argument("--power", type=float, default=2.0, help="IDW power (default: 2.0)")
-    p.add_argument("--eps", type=float, default=1e-12, help="Small epsilon to avoid divide-by-zero (default: 1e-12)")
-    p.add_argument("--clip-percentile", type=float, default=99.0,
-                   help="Clip color scale to +/- percentile for nicer plots (default: 99). Use 100 to disable.")
-    p.add_argument("--drop-flag-any", action="store_true",
-                   help="If set, drop rows where _flag_any is True (if present).")
+    p = argparse.ArgumentParser(
+        description="Interpolate scattered x,y,value points to a grid and save grid CSV + heatmap."
+    )
+    p.add_argument(
+        "--in",
+        dest="infile",
+        required=True,
+        help="Input CSV (e.g., data/processed/mag_data_anomaly.csv)",
+    )
+    p.add_argument(
+        "--value-col",
+        default="local_anomaly",
+        help="Column to grid (default: local_anomaly)",
+    )
+    p.add_argument(
+        "--out-dir",
+        default=None,
+        help="Output directory. If omitted, defaults to data/exports when possible.",
+    )
+    p.add_argument(
+        "--grid-step",
+        type=float,
+        default=None,
+        help="Grid spacing in same units as x/y (e.g., 0.05). If omitted, uses --grid-n.",
+    )
+    p.add_argument(
+        "--grid-n",
+        type=int,
+        default=200,
+        help="Grid resolution per axis if --grid-step not given (default: 200).",
+    )
+    p.add_argument(
+        "--power",
+        type=float,
+        default=2.0,
+        help="IDW power parameter (default: 2.0). Higher = more local influence.",
+    )
+    p.add_argument(
+        "--eps",
+        type=float,
+        default=1e-12,
+        help="Small epsilon to avoid divide-by-zero (default: 1e-12).",
+    )
+    p.add_argument(
+        "--clip-percentile",
+        type=float,
+        default=99.0,
+        help="Clip colormap to [100-clip, clip] percentiles for nicer plots (default: 99). "
+        "Use 100 to disable clipping.",
+    )
+    p.add_argument(
+        "--drop-flag-any",
+        action="store_true",
+        help="If set, drop rows where _flag_any is True (if present).",
+    )
+    p.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="If set, do not generate the PNG heatmap (still writes the grid CSV).",
+    )
     return p.parse_args()
 ```
 
@@ -134,9 +207,14 @@ This function defines all command-line arguments the script accepts:
    - Which column to interpolate onto the grid
    - Could be `B_total`, `local_anomaly`, or any numeric column
 
-3. **`--outdir`** (default: same as input file's directory)
-   - Where to save output files
-   - Example: `--outdir data/exports`
+3. **`--out-dir`** ⚠️ **CHANGED: Default behavior updated**
+   - **NEW DEFAULT**: If omitted, automatically uses `data/exports` when the input file path contains a `data` directory
+   - **Priority order:**
+     1. If `--out-dir` is explicitly provided, use that directory
+     2. If input path contains `data`, use `<...>/data/exports`
+     3. Otherwise, fallback to `<input_dir>/exports`
+   - **Example**: Input `data/processed/file.csv` → Output goes to `data/exports/` by default
+   - **Example**: `--out-dir custom/path` → Uses `custom/path` instead
 
 4. **`--grid-step`** (optional)
    - Grid spacing in same units as x/y coordinates
@@ -168,26 +246,182 @@ This function defines all command-line arguments the script accepts:
    - If present, drops rows where `_flag_any` column is True
    - Useful for filtering out problematic data points
 
+10. **`--no-plot`** (flag, no value) ⚠️ **NEW**
+    - If present, skips generating the PNG heatmap
+    - Still writes the grid CSV file
+    - Useful when you only need the data, not the visualization
+
 **Example usage:**
 ```bash
-# Basic usage
-python3 scripts/interpolate_to_heatmapV1.py --in data.csv --value-col local_anomaly
+# Basic usage (outputs to data/exports by default)
+python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 
 # Custom grid spacing
-python3 scripts/interpolate_to_heatmapV1.py --in data.csv --grid-step 0.05
+python3 scripts/interpolate_to_heatmapV1.py --in data/processed/file.csv --grid-step 0.05
 
-# Custom power and output directory
-python3 scripts/interpolate_to_heatmapV1.py --in data.csv --power 2.5 --outdir data/exports
+# Custom power and explicit output directory
+python3 scripts/interpolate_to_heatmapV1.py --in data/processed/file.csv --power 2.5 --out-dir data/exports
 
 # Filter flagged data
-python3 scripts/interpolate_to_heatmapV1.py --in data.csv --drop-flag-any
+python3 scripts/interpolate_to_heatmapV1.py --in data/processed/file.csv --drop-flag-any
+
+# Generate only CSV, no PNG
+python3 scripts/interpolate_to_heatmapV1.py --in data/processed/file.csv --no-plot
 ```
 
 ---
 
-## Section 3: IDW Interpolation Function (Lines 59-96)
+## Section 3: Output Directory Resolution (Lines 134-151)
 
-### Function: `idw_grid()` (Lines 59-96)
+### Function: `resolve_outdir()` (Lines 134-151)
+
+```python
+def resolve_outdir(infile: Path, out_dir_arg: Optional[str]) -> Path:
+    """
+    Resolve output directory.
+    Priority:
+      1) --out-dir (explicit)
+      2) If path contains a 'data' directory, use <...>/data/exports
+      3) Otherwise fallback to <input_dir>/exports
+    """
+    if out_dir_arg:
+        return Path(out_dir_arg)
+
+    parts = infile.resolve().parts
+    if "data" in parts:
+        data_root = Path(*parts[: parts.index("data") + 1])  # .../data
+        return data_root / "exports"
+
+    # fallback if not in a project layout
+    return infile.parent / "exports"
+```
+
+**What it does:**
+
+This function determines where output files should be saved based on the input file path and command-line arguments.
+
+**Priority order:**
+
+1. **Explicit `--out-dir` argument** (highest priority)
+   - If the user provides `--out-dir`, use that directory exactly as specified
+   - Example: `--out-dir custom/path` → uses `custom/path`
+
+2. **Automatic `data/exports` detection** ⚠️ **NEW BEHAVIOR**
+   - If the input file path contains a `data` directory, automatically uses `<...>/data/exports`
+   - This is the new default behavior for files in the standard project structure
+   - Example: Input `data/processed/file.csv` → Output `data/exports/file_grid.csv`
+   - Example: Input `/project/data/raw/file.csv` → Output `/project/data/exports/file_grid.csv`
+
+3. **Fallback to `<input_dir>/exports`**
+   - If the input file is not in a `data` directory, creates an `exports` subdirectory in the input file's directory
+   - Example: Input `other/path/file.csv` → Output `other/path/exports/file_grid.csv`
+
+**Why this change?**
+
+Previously, output files were written to the same directory as the input file (e.g., `data/processed/`). The new behavior automatically separates processed data from exported results:
+- **Processed data** stays in `data/processed/`
+- **Exported results** go to `data/exports/`
+
+This keeps the directory structure cleaner and makes it easier to find final output files.
+
+**Examples:**
+
+```python
+# Input: data/processed/mag_data_anomaly.csv
+# Output: data/exports/mag_data_anomaly_grid.csv
+
+# Input: /home/user/project/data/raw/file.csv
+# Output: /home/user/project/data/exports/file_grid.csv
+
+# Input: other/path/file.csv (no 'data' in path)
+# Output: other/path/exports/file_grid.csv
+
+# Input: data/processed/file.csv with --out-dir custom/path
+# Output: custom/path/file_grid.csv (explicit override)
+```
+
+---
+
+## Section 4: Grid Axis Generation (Lines 111-131)
+
+### Function: `make_grid_axes()` (Lines 111-131)
+
+```python
+def make_grid_axes(
+    xmin: float,
+    xmax: float,
+    ymin: float,
+    ymax: float,
+    grid_step: Optional[float],
+    grid_n: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Returns gx, gy 1D arrays defining the target grid axes.
+    - If grid_step is provided, uses np.arange with a small inclusive buffer.
+    - Otherwise uses np.linspace with grid_n points per axis.
+    """
+    if grid_step is not None and grid_step > 0:
+        # Include the max edge (with a tiny buffer so endpoint isn't missed due to float rounding)
+        gx = np.arange(xmin, xmax + grid_step * 0.5, grid_step)
+        gy = np.arange(ymin, ymax + grid_step * 0.5, grid_step)
+    else:
+        gx = np.linspace(xmin, xmax, grid_n)
+        gy = np.linspace(ymin, ymax, grid_n)
+    return gx, gy
+```
+
+**What it does:**
+
+This function creates the grid axes (x and y coordinate arrays) that define where interpolation will occur.
+
+**Parameters:**
+- `xmin, xmax`: Minimum and maximum x-coordinates of data
+- `ymin, ymax`: Minimum and maximum y-coordinates of data
+- `grid_step`: Optional spacing between grid points (if provided)
+- `grid_n`: Number of grid points per axis (if `grid_step` not provided)
+
+**Returns:**
+- `gx, gy`: Arrays of grid coordinates
+
+**Two modes:**
+
+1. **Fixed spacing mode** (if `grid_step` is provided):
+   ```python
+   gx = np.arange(xmin, xmax + grid_step * 0.5, grid_step)
+   ```
+   - Creates grid with specified spacing
+   - Example: `xmin=0.0, xmax=1.0, grid_step=0.2` → `[0.0, 0.2, 0.4, 0.6, 0.8, 1.0]`
+   - The `+ grid_step * 0.5` ensures the last point is included
+
+2. **Fixed count mode** (if `grid_step` is None):
+   ```python
+   gx = np.linspace(xmin, xmax, grid_n)
+   ```
+   - Creates grid with specified number of points
+   - Example: `xmin=0.0, xmax=1.0, grid_n=5` → `[0.0, 0.25, 0.5, 0.75, 1.0]`
+   - Points are evenly spaced
+
+**Example:**
+
+```python
+# Data extent: x from 0.0 to 2.0, y from 0.0 to 1.0
+
+# Mode 1: Fixed spacing
+gx, gy = make_grid_axes(0.0, 2.0, 0.0, 1.0, grid_step=0.5, grid_n=200)
+# gx = [0.0, 0.5, 1.0, 1.5, 2.0]
+# gy = [0.0, 0.5, 1.0]
+
+# Mode 2: Fixed count
+gx, gy = make_grid_axes(0.0, 2.0, 0.0, 1.0, grid_step=None, grid_n=5)
+# gx = [0.0, 0.5, 1.0, 1.5, 2.0]  (5 points)
+# gy = [0.0, 0.25, 0.5, 0.75, 1.0]  (5 points)
+```
+
+---
+
+## Section 5: IDW Interpolation Function (Lines 157-194)
+
+### Function: `idw_grid()` (Lines 157-194)
 
 ```python
 def idw_grid(
@@ -201,29 +435,29 @@ def idw_grid(
 ) -> np.ndarray:
     """
     Inverse Distance Weighting interpolation.
-    Returns grid Z with shape (len(gy), len(gx)) where rows correspond to gy (y-axis).
+    Returns grid Z with shape (len(gy), len(gx)), where rows correspond to gy (y-axis).
     """
-    # Build mesh of target points
-    Xg, Yg = np.meshgrid(gx, gy)  # shape (ny, nx)
+    Xg, Yg = np.meshgrid(gx, gy)  # (ny, nx)
 
-    # Flatten to vector of target points
     tx = Xg.ravel()
     ty = Yg.ravel()
 
-    # For each target point, compute weights to all source points
-    Z = np.empty_like(tx, dtype=float)
+    Z = np.empty(tx.size, dtype=float)
 
+    # Note: d2 is squared distance; using power/2 makes it equivalent to 1/d^power.
     for i in range(tx.size):
         dx = tx[i] - x
         dy = ty[i] - y
         d2 = dx * dx + dy * dy
 
-        # If target coincides with a source point, use its value directly
-        j0 = np.argmin(d2)
+        # If target is (numerically) on top of a source point, copy that exact value.
+        j0 = int(np.argmin(d2))
         if d2[j0] <= eps:
             Z[i] = v[j0]
             continue
 
+        # weights: 1 / (d^power) but computed via squared distances:
+        # d^power == (d^2)^(power/2) == d2^(power/2)
         w = 1.0 / (d2 ** (power / 2.0) + eps)
         Z[i] = float(np.sum(w * v) / np.sum(w))
 
@@ -327,82 +561,20 @@ Interpolated values:
 
 ---
 
-## Section 4: Grid Axis Generation (Lines 99-107)
-
-### Function: `make_grid_axes()` (Lines 99-107)
-
-```python
-def make_grid_axes(xmin: float, xmax: float, ymin: float, ymax: float,
-                   grid_step: Optional[float], grid_n: int) -> Tuple[np.ndarray, np.ndarray]:
-    if grid_step is not None and grid_step > 0:
-        gx = np.arange(xmin, xmax + grid_step * 0.5, grid_step)
-        gy = np.arange(ymin, ymax + grid_step * 0.5, grid_step)
-    else:
-        gx = np.linspace(xmin, xmax, grid_n)
-        gy = np.linspace(ymin, ymax, grid_n)
-    return gx, gy
-```
-
-**What it does:**
-
-This function creates the grid axes (x and y coordinate arrays) that define where interpolation will occur.
-
-**Parameters:**
-- `xmin, xmax`: Minimum and maximum x-coordinates of data
-- `ymin, ymax`: Minimum and maximum y-coordinates of data
-- `grid_step`: Optional spacing between grid points (if provided)
-- `grid_n`: Number of grid points per axis (if `grid_step` not provided)
-
-**Returns:**
-- `gx, gy`: Arrays of grid coordinates
-
-**Two modes:**
-
-1. **Fixed spacing mode** (if `grid_step` is provided):
-   ```python
-   gx = np.arange(xmin, xmax + grid_step * 0.5, grid_step)
-   ```
-   - Creates grid with specified spacing
-   - Example: `xmin=0.0, xmax=1.0, grid_step=0.2` → `[0.0, 0.2, 0.4, 0.6, 0.8, 1.0]`
-   - The `+ grid_step * 0.5` ensures the last point is included
-
-2. **Fixed count mode** (if `grid_step` is None):
-   ```python
-   gx = np.linspace(xmin, xmax, grid_n)
-   ```
-   - Creates grid with specified number of points
-   - Example: `xmin=0.0, xmax=1.0, grid_n=5` → `[0.0, 0.25, 0.5, 0.75, 1.0]`
-   - Points are evenly spaced
-
-**Example:**
-
-```python
-# Data extent: x from 0.0 to 2.0, y from 0.0 to 1.0
-
-# Mode 1: Fixed spacing
-gx, gy = make_grid_axes(0.0, 2.0, 0.0, 1.0, grid_step=0.5, grid_n=200)
-# gx = [0.0, 0.5, 1.0, 1.5, 2.0]
-# gy = [0.0, 0.5, 1.0]
-
-# Mode 2: Fixed count
-gx, gy = make_grid_axes(0.0, 2.0, 0.0, 1.0, grid_step=None, grid_n=5)
-# gx = [0.0, 0.5, 1.0, 1.5, 2.0]  (5 points)
-# gy = [0.0, 0.25, 0.5, 0.75, 1.0]  (5 points)
-```
-
 ---
 
-## Section 5: Main Function (Lines 110-209)
+## Section 5: Main Function (Lines 200-323)
 
 ### Function: `main()` (Lines 110-209)
 
 The main function orchestrates the entire interpolation and visualization process.
 
-#### Part 1: Argument Parsing and Input Validation (Lines 111-126)
+#### Part 1: Argument Parsing and Input Validation (Lines 200-222)
 
 ```python
 def main() -> int:
     args = parse_args()
+
     infile = Path(args.infile)
     if not infile.exists():
         print(f"ERROR: input file not found: {infile}", file=sys.stderr)
@@ -414,10 +586,15 @@ def main() -> int:
         print(f"ERROR: could not read CSV: {e}", file=sys.stderr)
         return 2
 
-    for c in ["x", "y", args.value_col]:
-        if c not in df.columns:
-            print(f"ERROR: missing required column '{c}'. Columns found: {list(df.columns)}", file=sys.stderr)
-            return 2
+    # Required columns
+    needed = ["x", "y", args.value_col]
+    missing = [c for c in needed if c not in df.columns]
+    if missing:
+        print(
+            f"ERROR: missing required column(s): {missing}. Columns found: {list(df.columns)}",
+            file=sys.stderr,
+        )
+        return 2
 ```
 
 **What it does:**
@@ -439,27 +616,31 @@ def main() -> int:
    - Provides helpful error message listing available columns
    - Returns exit code 2 if missing
 
-#### Part 2: Data Filtering and Cleaning (Lines 128-145)
+#### Part 2: Data Filtering and Cleaning (Lines 224-245)
 
 ```python
-    # Optional drop flags
+    # Optional drop flagged rows
     if args.drop_flag_any and "_flag_any" in df.columns:
         before = len(df)
-        df = df.loc[~df["_flag_any"].astype(bool)].copy()
+        # Make sure it's boolean-ish, then invert mask to keep unflagged
+        mask = ~df["_flag_any"].astype(bool)
+        df = df.loc[mask].copy()
         print(f"Note: dropped {before - len(df)} rows where _flag_any == True.")
 
-    # Numeric coercion
+    # Coerce numeric columns; bad values -> NaN
     df["x"] = pd.to_numeric(df["x"], errors="coerce")
     df["y"] = pd.to_numeric(df["y"], errors="coerce")
     df[args.value_col] = pd.to_numeric(df[args.value_col], errors="coerce")
+
+    # Drop rows missing x/y/value
     df = df.dropna(subset=["x", "y", args.value_col]).copy()
     if len(df) == 0:
-        print("ERROR: no valid rows after dropping NaNs.", file=sys.stderr)
+        print("ERROR: no valid rows after dropping NaNs in x/y/value.", file=sys.stderr)
         return 2
 
-    x = df["x"].to_numpy(float)
-    y = df["y"].to_numpy(float)
-    v = df[args.value_col].to_numpy(float)
+    x = df["x"].to_numpy(dtype=float)
+    y = df["y"].to_numpy(dtype=float)
+    v = df[args.value_col].to_numpy(dtype=float)
 ```
 
 **What it does:**
@@ -501,38 +682,42 @@ def main() -> int:
 # 2.0  3.0       0.8
 ```
 
-#### Part 3: Grid Setup (Lines 147-157)
+#### Part 3: Grid Setup (Lines 247-259)
 
 ```python
     xmin, xmax = float(np.min(x)), float(np.max(x))
     ymin, ymax = float(np.min(y)), float(np.max(y))
 
-    outdir = Path(args.outdir) if args.outdir else infile.parent
+    # Output directory (exports by default)
+    outdir = resolve_outdir(infile, args.out_dir)
     outdir.mkdir(parents=True, exist_ok=True)
 
     stem = infile.stem
     grid_csv = outdir / f"{stem}_grid.csv"
     heatmap_png = outdir / f"{stem}_heatmap.png"
 
+    # Build grid axes
     gx, gy = make_grid_axes(xmin, xmax, ymin, ymax, args.grid_step, args.grid_n)
 ```
 
 **What it does:**
 
-1. **Find data extent** (Lines 147-148)
+1. **Find data extent** (Lines 247-248)
    - Calculates min/max x and y coordinates
    - Defines the bounding box for the grid
 
-2. **Set output directory** (Lines 150-151)
-   - Uses `--outdir` if provided, otherwise uses input file's directory
-   - Creates directory if it doesn't exist
+2. **Set output directory** ⚠️ **CHANGED** (Lines 250-252)
+   - **NEW**: Uses `resolve_outdir()` function to determine output directory
+   - **Default behavior**: If input is in `data/processed/`, output goes to `data/exports/`
+   - **Explicit override**: If `--out-dir` is provided, uses that directory
+   - Creates directory if it doesn't exist (including parent directories)
 
-3. **Define output filenames** (Lines 153-155)
+3. **Define output filenames** (Lines 254-256)
    - `grid_csv`: Grid data CSV file
    - `heatmap_png`: Heatmap image file
    - Uses input file's stem (filename without extension)
 
-4. **Create grid axes** (Line 157)
+4. **Create grid axes** (Line 259)
    - Generates grid coordinate arrays using `make_grid_axes()`
 
 **Example:**
@@ -541,44 +726,53 @@ def main() -> int:
 # Data extent: x from 0.0 to 2.0, y from 0.0 to 1.0
 # Input file: data/processed/mag_data_anomaly.csv
 
-# Outputs:
-# - data/processed/mag_data_anomaly_grid.csv
-# - data/processed/mag_data_anomaly_heatmap.png
+# NEW DEFAULT OUTPUTS:
+# - data/exports/mag_data_anomaly_grid.csv  ⚠️ Changed from data/processed/
+# - data/exports/mag_data_anomaly_heatmap.png  ⚠️ Changed from data/processed/
 
 # Grid: 200×200 points (if using default --grid-n)
 ```
 
-#### Part 4: Interpolation (Lines 159-160)
+#### Part 4: Interpolation (Lines 261-267)
 
 ```python
-    print(f"Interpolating '{args.value_col}' onto grid: nx={len(gx)}, ny={len(gy)} (IDW power={args.power}) ...")
+    print(
+        f"Interpolating '{args.value_col}' onto grid: nx={len(gx)}, ny={len(gy)} "
+        f"(IDW power={args.power})"
+    )
+
+    # Compute interpolated grid
     Z = idw_grid(x, y, v, gx, gy, power=args.power, eps=args.eps)
 ```
 
 **What it does:**
 
-1. **Print progress message** (Line 159)
+1. **Print progress message** (Lines 261-264)
    - Shows what's being interpolated and grid size
 
-2. **Perform interpolation** (Line 160)
+2. **Perform interpolation** (Line 267)
    - Calls `idw_grid()` to interpolate values onto grid
    - Returns 2D array `Z` with interpolated values
 
 **Example output:**
 ```
-Interpolating 'local_anomaly' onto grid: nx=200, ny=200 (IDW power=2.0) ...
+Interpolating 'local_anomaly' onto grid: nx=200, ny=200 (IDW power=2.0)
 ```
 
-#### Part 5: Export Grid CSV (Lines 162-173)
+#### Part 5: Export Grid CSV (Lines 269-284)
 
 ```python
-    # Export grid CSV as long-form table (x,y,value) for easy GIS/analysis
+    # Export grid CSV as long-form table (x,y,value)
+    # (This rebuilds Xg/Yg only for labeling the grid with coordinates.)
     Xg, Yg = np.meshgrid(gx, gy)
-    out_df = pd.DataFrame({
-        "x": Xg.ravel(),
-        "y": Yg.ravel(),
-        args.value_col: Z.ravel(),
-    })
+    out_df = pd.DataFrame(
+        {
+            "x": Xg.ravel(),
+            "y": Yg.ravel(),
+            args.value_col: Z.ravel(),
+        }
+    )
+
     try:
         out_df.to_csv(grid_csv, index=False)
     except Exception as e:
@@ -614,40 +808,40 @@ x,y,local_anomaly
 
 This format is easy to import into GIS software or other analysis tools.
 
-#### Part 6: Generate Heatmap (Lines 175-205)
+#### Part 6: Generate Heatmap (Lines 286-316) ⚠️ **NEW: Optional with --no-plot**
 
 ```python
-    # Heatmap plot
-    # Clip color scale for nicer visuals (optional)
-    clip = float(args.clip_percentile)
-    if 0 < clip < 100:
-        lo = np.nanpercentile(Z, 100 - clip)
-        hi = np.nanpercentile(Z, clip)
-        vmin, vmax = lo, hi
-    else:
-        vmin, vmax = None, None
+    # Heatmap plot (optional)
+    if not args.no_plot:
+        clip = float(args.clip_percentile)
+        if 0 < clip < 100:
+            lo = np.nanpercentile(Z, 100 - clip)
+            hi = np.nanpercentile(Z, clip)
+            vmin, vmax = float(lo), float(hi)
+        else:
+            vmin, vmax = None, None
 
-    plt.figure()
-    im = plt.imshow(
-        Z,
-        origin="lower",
-        extent=[gx.min(), gx.max(), gy.min(), gy.max()],
-        aspect="equal",
-        vmin=vmin,
-        vmax=vmax,
-    )
-    plt.colorbar(im, label=args.value_col)
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.title(f"Heatmap (IDW) of {args.value_col}")
-    plt.tight_layout()
+        plt.figure()
+        im = plt.imshow(
+            Z,
+            origin="lower",
+            extent=[float(gx.min()), float(gx.max()), float(gy.min()), float(gy.max())],
+            aspect="equal",
+            vmin=vmin,
+            vmax=vmax,
+        )
+        plt.colorbar(im, label=args.value_col)
+        plt.xlabel("x")
+        plt.ylabel("y")
+        plt.title(f"Heatmap (IDW) of {args.value_col}")
+        plt.tight_layout()
 
-    try:
-        plt.savefig(heatmap_png, dpi=160)
-        plt.close()
-    except Exception as e:
-        print(f"ERROR: could not save heatmap PNG: {e}", file=sys.stderr)
-        return 3
+        try:
+            plt.savefig(heatmap_png, dpi=160)
+            plt.close()
+        except Exception as e:
+            print(f"ERROR: could not save heatmap PNG: {e}", file=sys.stderr)
+            return 3
 ```
 
 **What it does:**
@@ -691,22 +885,26 @@ The heatmap shows interpolated values as colors:
 - **Blue/cold colors**: Low values
 - **Smooth gradients**: IDW creates smooth transitions between points
 
-#### Part 7: Success Message (Lines 207-209)
+#### Part 7: Success Message (Lines 318-323)
 
 ```python
-    print(f"Wrote grid CSV:   {grid_csv}")
-    print(f"Wrote heatmap:    {heatmap_png}")
+    print(f"Wrote grid CSV: {grid_csv}")
+    if not args.no_plot:
+        print(f"Wrote heatmap:  {heatmap_png}")
+    else:
+        print("Note: --no-plot set, so no PNG was generated.")
     return 0
 ```
 
 **What it does:**
 
 - Prints success messages with output file paths
+- Conditionally prints heatmap message based on `--no-plot` flag
 - Returns exit code 0 (success)
 
 ---
 
-## Section 6: Script Entry Point (Lines 212-217)
+## Section 6: Script Entry Point (Lines 326-331)
 
 ```python
 if __name__ == "__main__":
@@ -864,8 +1062,8 @@ This script is typically the **final step** in the Fluxspace Core pipeline:
    → data/processed/mag_data_anomaly.csv
 
 4. interpolate_to_heatmapV1.py  ← YOU ARE HERE
-   → data/exports/mag_data_anomaly_grid.csv
-   → data/exports/mag_data_anomaly_heatmap.png
+   → data/exports/mag_data_anomaly_grid.csv  ⚠️ Now defaults to exports/
+   → data/exports/mag_data_anomaly_heatmap.png  ⚠️ Now defaults to exports/
 ```
 
 **Typical workflow:**
@@ -880,12 +1078,12 @@ python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
 # Step 3: Compute anomalies
 python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.30
 
-# Step 4: Create heatmap
+# Step 4: Create heatmap (--out-dir is now optional, defaults to data/exports)
 python3 scripts/interpolate_to_heatmapV1.py \
     --in data/processed/mag_data_anomaly.csv \
     --value-col local_anomaly \
-    --grid-step 0.05 \
-    --outdir data/exports
+    --grid-step 0.05
+    # Outputs automatically go to data/exports/ ⚠️ No need for --out-dir anymore!
 ```
 
 ---
