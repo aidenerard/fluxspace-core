@@ -390,10 +390,7 @@ python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.c
 # Step 4: Generate heatmap
 python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 
-# Step 5: Organize run data (moves outputs to run folder)
-./tools/new_run.sh
-
-# Step 6: Backup to USB (optional, but recommended)
+# Step 5: Backup to USB (optional, but recommended)
 ./tools/backup_runs_to_usb.sh
 
 ls data/runs
