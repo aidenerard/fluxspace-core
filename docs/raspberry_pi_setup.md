@@ -95,6 +95,21 @@ python -c "import qwiic_mmc5983ma; print('qwiic_mmc5983ma OK')"
 
 If both work, you're ready to use the pipeline!
 
+### 2.4. Optional: Install tmux (Recommended for Persistent Sessions)
+
+tmux allows you to keep terminal sessions running even if your SSH connection drops. This is especially useful for long-running operations or when working over unstable connections (like hotspots).
+
+Install tmux:
+```bash
+sudo apt update
+sudo apt install -y tmux
+```
+
+**Why use tmux?**
+- Sessions survive SSH disconnects
+- Can detach and reattach later
+- Useful for long pipeline runs or when stepping away
+
 ---
 
 ## Part 3 — Wiring the Sensor
@@ -136,6 +151,43 @@ python3 tools/mmc5983ma_smoketest.py
 ```
 
 Should print: `✅ MMC5983MA responding on I2C at address 0x30`
+
+### 4.5. Optional: Use tmux for Persistent Sessions
+
+**Start a new tmux session:**
+```bash
+tmux new -s flux
+```
+
+You're now "inside" tmux. All commands you run here will continue even if your SSH connection drops.
+
+**Detach from tmux (keeps session running):**
+Press: **Ctrl + b**, then **d**
+
+Your session continues running in the background.
+
+**Reattach to existing session:**
+```bash
+tmux attach -t flux
+```
+
+**List all sessions:**
+```bash
+tmux ls
+```
+
+**Why sessions might disappear:**
+- Pi rebooted/crashed/lost power (tmux sessions live in RAM)
+- You exited the session (instead of detaching)
+- tmux wasn't installed
+
+**Safe workflow for long operations:**
+1. Start tmux: `tmux new -s flux`
+2. Run your pipeline commands inside tmux
+3. Detach when stepping away (Ctrl+b, then d)
+4. Reattach later: `tmux attach -t flux`
+
+**Note:** tmux helps with SSH drops, but sessions are lost on reboot. For hotspot work or unstable connections, always use tmux for long-running operations.
 
 ---
 
@@ -219,21 +271,49 @@ python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly
 
 ### 5.5. Organize Run Data
 
-After completing a full pipeline run (5.1 → 5.4), archive outputs:
+**Before starting a new test session**, create a new run folder:
 
 ```bash
+cd ~/fluxspace-core
 ./tools/new_run.sh
 ```
 
-This creates a timestamped folder in `data/runs/` and copies all current outputs there.
+This creates a timestamped folder in `data/runs/` (e.g., `data/runs/12-28-2024_14-30`). Copy or note this path—you'll use it for this session's outputs.
+
+**After completing a full pipeline run (5.1 → 5.4)**, all outputs are organized in that run folder.
 
 **Verify outputs:**
 ```bash
-ls data/raw
-ls data/processed
-ls data/exports
 ls data/runs
+ls data/runs/<latest-run-folder>
 ```
+
+### 5.6. Backup Runs to USB
+
+After completing your test session, backup all runs to USB:
+
+**Quick check (verify USB is mounted):**
+```bash
+ls /media/fluxspace
+```
+
+You should see `FLUXSPACE` directory.
+
+**Run the backup:**
+```bash
+cd ~/fluxspace-core
+./tools/backup_runs_to_usb.sh
+```
+
+This syncs all runs from `data/runs/` to your USB drive at `/media/fluxspace/FLUXSPACE/fluxspace_runs_backup/`.
+
+**What it does:**
+- Checks that USB is mounted
+- Uses `rsync` to sync all run folders
+- `--delete` flag keeps USB in sync (removes files on USB that no longer exist on Pi)
+- Creates backup directory if it doesn't exist
+
+**Note:** If USB is not mounted, the script will tell you. Plug in the USB drive and ensure it's mounted at `/media/fluxspace/FLUXSPACE` before running the backup.
 
 ---
 
@@ -257,16 +337,29 @@ You should see:
 Do TWO runs to establish baseline and detect anomalies:
 
 ### 7.1. Baseline Run
-- Cardboard only
-- No nearby metal
-- Run the full pipeline (5.1 → 5.4)
-- This establishes your "normal" magnetic field
+1. Create new run folder: `./tools/new_run.sh`
+2. Cardboard only, no nearby metal
+3. Run the full pipeline (5.1 → 5.4)
+4. This establishes your "normal" magnetic field
+5. Backup to USB: `./tools/backup_runs_to_usb.sh`
 
 ### 7.2. Stimulus Run (Introduce Metal)
-- Place steel/rebar near/under board
-- Rerun the same grid pattern
-- Compare heatmaps + anomaly CSV
-- The difference between baseline and stimulus shows the metal's effect
+1. Create new run folder: `./tools/new_run.sh`
+2. Place steel/rebar near/under board at known location
+3. Rerun the same grid pattern
+4. Run the full pipeline (5.1 → 5.4)
+5. Compare heatmaps + anomaly CSV
+6. Backup to USB: `./tools/backup_runs_to_usb.sh`
+
+The difference between baseline and stimulus shows the metal's effect.
+
+### 7.3. Tuning Parameters
+
+After comparing runs, tune these parameters:
+
+- **Grid spacing (DX/DY)**: Smaller spacing = higher resolution but more points
+- **Samples per point (N)**: More samples = better averaging but slower
+- **Anomaly radius**: Start with ~0.10m for 25cm board, adjust based on results
 
 ---
 
@@ -278,6 +371,9 @@ Complete pipeline from start to finish (copy/paste):
 cd ~/fluxspace-core
 source ~/fluxenv/bin/activate
 mkdir -p data/raw data/processed data/exports data/runs
+
+# Create new run folder for this session
+./tools/new_run.sh
 
 # Optional: verify sensor is detected
 i2cdetect -y 1
@@ -294,12 +390,12 @@ python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.c
 # Step 4: Generate heatmap
 python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 
-# Step 5: Organize run data
+# Step 5: Organize run data (moves outputs to run folder)
 ./tools/new_run.sh
 
-ls data/raw
-ls data/processed
-ls data/exports
+# Step 6: Backup to USB (optional, but recommended)
+./tools/backup_runs_to_usb.sh
+
 ls data/runs
 ```
 
@@ -387,6 +483,19 @@ sudo nmap -sn 192.168.1.0/24
 ssh fluxspace@<pi-ip>
 ```
 
+### 9.8. tmux session disappeared ("no sessions")
+If you see "no sessions" when trying to attach, one of these happened:
+- Pi rebooted/crashed/lost power (tmux sessions live in RAM, not persistent across reboots)
+- You exited the session instead of detaching
+- tmux wasn't installed
+
+**Fix:**
+1. Install tmux if needed: `sudo apt install -y tmux`
+2. Start a new session: `tmux new -s flux`
+3. For hotspot/unstable connections, always use tmux for long operations
+
+**Remember:** Detach with Ctrl+b, then d (don't just close the terminal or type `exit`).
+
 ---
 
 ## Part 10 — Additional Notes
@@ -439,7 +548,11 @@ Wait ~20 seconds, then unplug power.
 
 **Every session:**
 1. SSH into Pi
-2. `cd ~/fluxspace-core && source ~/fluxenv/bin/activate`
-3. Run pipeline (5.1 → 5.4)
+2. (Optional) Start/attach tmux: `tmux new -s flux` or `tmux attach -t flux`
+3. `cd ~/fluxspace-core && source ~/fluxenv/bin/activate`
+4. Create new run folder: `./tools/new_run.sh`
+5. Run pipeline (5.1 → 5.4)
+6. Backup to USB: `./tools/backup_runs_to_usb.sh`
+7. (If using tmux) Detach before disconnecting: Ctrl+b, then d
 
-**That's it!** The automated setup script handles all the complexity.
+**That's it!** The automated setup script handles all the complexity. Use tmux for persistent sessions, especially on unstable connections. Always backup your runs to USB after each test session.
