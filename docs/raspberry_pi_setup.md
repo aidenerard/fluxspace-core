@@ -290,7 +290,22 @@ ls data/runs/<latest-run-folder>
 
 ### 5.6. Backup Runs to USB
 
-After completing your test session, backup all runs to USB:
+After completing your test session, backup all runs to USB.
+
+#### 5.6.1. Plug in and mount the USB drive
+
+1. **Plug in the FLUXSPACE USB stick.**
+2. **Create the mount point (once):**
+   ```bash
+   sudo mkdir -p /media/fluxspace/FLUXSPACE
+   ```
+3. **Mount the USB (FAT32) read–write for your user:**
+   ```bash
+   sudo mount -t vfat -o rw,uid=$(id -u),gid=$(id -g),umask=022 /dev/sda1 /media/fluxspace/FLUXSPACE
+   ```
+
+   - `/dev/sda1` is the **most common** device for a single USB stick on the Pi.
+   - If this fails, run `lsblk` or `sudo fdisk -l` to confirm the correct device, then substitute it for `/dev/sda1`.
 
 **Quick check (verify USB is mounted):**
 ```bash
@@ -299,7 +314,8 @@ ls /media/fluxspace
 
 You should see `FLUXSPACE` directory.
 
-**Run the backup:**
+#### 5.6.2. Run the backup script
+
 ```bash
 cd ~/fluxspace-core
 ./tools/backup_runs_to_usb.sh
