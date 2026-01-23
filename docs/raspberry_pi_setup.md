@@ -315,6 +315,45 @@ This syncs all runs from `data/runs/` to your USB drive at `/media/fluxspace/FLU
 
 **Note:** If USB is not mounted, the script will tell you. Plug in the USB drive and ensure it's mounted at `/media/fluxspace/FLUXSPACE` before running the backup.
 
+### 5.7. Safely Unmount USB Drive
+
+**Always unmount the USB drive before unplugging it** to prevent filesystem corruption. If you don't, FAT32 can get marked as "dirty" from an unsafe removal, causing the Pi to remount it read-only next time (`errors=remount-ro`).
+
+**Safe unmount procedure:**
+
+1. **Flush all pending writes:**
+   ```bash
+   sync
+   ```
+
+2. **Wait 2–5 seconds** after `sync` completes (or after rsync finishes) to ensure all data is written.
+
+3. **Unmount the drive:**
+   ```bash
+   sudo umount /media/fluxspace/FLUXSPACE
+   ```
+
+4. **Verify unmount succeeded:** Wait until `umount` returns to the prompt with **no error** before unplugging.
+
+**If `umount` says "device is busy":**
+
+The USB is still in use by a process. Find what's using it:
+
+```bash
+lsof +D /media/fluxspace/FLUXSPACE | head
+```
+
+Stop the process (close terminals/files using the USB, or kill the process), then try `umount` again.
+
+**Why this matters:**
+
+- Prevents FAT32 filesystem corruption from unsafe removal
+- Avoids read-only remounts on next insertion
+- Ensures all data is fully written before disconnection
+- Reduces need for `fsck.vfat` repairs
+
+**Note:** If the USB stick itself is flaky or already has filesystem corruption, you may occasionally need `fsck.vfat` to repair it. But following this unmount procedure every time will prevent corruption from happening during normal use.
+
 ---
 
 ## Part 6 — Quick "It Worked" Checklist
