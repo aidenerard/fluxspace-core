@@ -5,25 +5,24 @@ import time
 import math
 import sys
 from datetime import datetime, timezone
+import argparse
 
 import qwiic_mmc5983ma
 
 
-CSV_PATH = "data/raw/mag_data.csv"
+def parse_args():
+    p = argparse.ArgumentParser(description="MMC5983MA -> CSV Logger (Point Capture Mode)")
+    p.add_argument("--out", type=str, default="data/raw/mag_data.csv", help="Output CSV path")
+    p.add_argument("--nx", type=int, default=5, help="Number of grid points in X")
+    p.add_argument("--ny", type=int, default=5, help="Number of grid points in Y")
+    p.add_argument("--dx", type=float, default=0.05, help="Grid spacing in X (meters)")
+    p.add_argument("--dy", type=float, default=0.05, help="Grid spacing in Y (meters)")
+    p.add_argument("--x0", type=float, default=0.0, help="Grid origin X (meters)")
+    p.add_argument("--y0", type=float, default=0.0, help="Grid origin Y (meters)")
+    p.add_argument("--samples", type=int, default=100, help="Samples to average per point")
+    p.add_argument("--sample-delay", type=float, default=0.01, help="Delay between samples (seconds)")
+    return p.parse_args()
 
-# Point-capture settings (tweak anytime)
-SAMPLES_PER_POINT = 100        # how many samples to average per grid point
-SAMPLE_DELAY_S = 0.01          # delay between samples (0.01s = ~100 Hz loop)
-
-# ---- GRID SETTINGS ----
-# 5x5 ft ≈ 1.52 m. With 0.20 m spacing, use 9 points per side (~1.60 m span).
-DX = 0.05   # meters between points in x
-DY = 0.05   # meters between points in y
-NX = 5      # number of points in x direction
-NY = 5      # number of points in y direction
-X0 = 0.0    # starting x (meters)
-Y0 = 0.0    # starting y (meters)
-# ------------------------------------------
 
 def utc_iso():
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -35,7 +34,7 @@ def ensure_csv_header(path: str):
         needs_header = (not os.path.exists(path)) or (os.path.getsize(path) == 0)
     except (OSError, PermissionError) as e:
         raise RuntimeError(f"Cannot access file {path}: {e}")
-    
+
     # Optional: Validate existing header
     if not needs_header:
         try:
@@ -46,12 +45,12 @@ def ensure_csv_header(path: str):
                     needs_header = True  # Recreate if header is wrong
         except (IOError, PermissionError) as e:
             raise RuntimeError(f"Cannot read file {path}: {e}")
-    
+
     if needs_header:
         try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", newline="") as f:
                 w = csv.writer(f)
-                # Keep x,y,B_total for your anomaly script; extra columns are fine.
                 w.writerow(["time", "x", "y", "Bx", "By", "Bz", "B_total", "units"])
         except (IOError, OSError, PermissionError) as e:
             raise RuntimeError(f"Cannot write to file {path}: {e}")
@@ -62,13 +61,13 @@ def connect_sensor():
     mag = qwiic_mmc5983ma.QwiicMMC5983MA()
     if not mag.is_connected():
         raise RuntimeError(
-            "MMC5983MA not detected on I2C. Check wiring/Qwiic HAT and that I2C is enabled."
+            "MMC5983MA not detected on I2C. Check wiring/Qwiic adapter and that I2C is enabled."
         )
     mag.begin()
     return mag
 
 
-def read_avg_xyz_gauss(mag, n=SAMPLES_PER_POINT, delay_s=SAMPLE_DELAY_S):
+def read_avg_xyz_gauss(mag, n: int, delay_s: float):
     """Read N samples of (x,y,z) in gauss and return the averages."""
     sx = sy = sz = 0.0
     for i in range(n):
@@ -81,10 +80,7 @@ def read_avg_xyz_gauss(mag, n=SAMPLES_PER_POINT, delay_s=SAMPLE_DELAY_S):
             raise RuntimeError(f"Failed to read sensor at sample {i+1}/{n}: {e}")
         if delay_s > 0:
             time.sleep(delay_s)
-    ax = sx / n
-    ay = sy / n
-    az = sz / n
-    return ax, ay, az
+    return sx / n, sy / n, sz / n
 
 
 def append_row(path, row):
@@ -100,11 +96,20 @@ def beep():
 
 
 def main() -> int:
+    args = parse_args()
+
+    csv_path = args.out
+    nx, ny = args.nx, args.ny
+    dx, dy = args.dx, args.dy
+    x0, y0 = args.x0, args.y0
+    samples_per_point = args.samples
+    sample_delay_s = args.sample_delay
+
     print("\n=== MMC5983MA -> CSV Logger (Point Capture Mode) ===")
-    print(f"Output file: {CSV_PATH}")
+    print(f"Output file: {csv_path}")
 
     try:
-        ensure_csv_header(CSV_PATH)
+        ensure_csv_header(csv_path)
     except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
@@ -115,17 +120,18 @@ def main() -> int:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
 
-    print(f"Auto-grid enabled: NX={NX}, NY={NY}, DX={DX} m, DY={DY} m")
+    print(f"Auto-grid enabled: NX={nx}, NY={ny}, DX={dx} m, DY={dy} m, X0={x0} m, Y0={y0} m")
+    print(f"Samples/point: {samples_per_point}  |  Sample delay: {sample_delay_s}s")
     print("At each prompt, move the sensor to the point and press Enter.")
     print("Type 'q' then Enter to quit early.\n")
 
-    for j in range(NY):
-        for i in range(NX):
-            x = X0 + i * DX
-            y = Y0 + j * DY
+    for j in range(ny):
+        for i in range(nx):
+            x = x0 + i * dx
+            y = y0 + j * dy
 
             user = input(
-                f"Point ({i+1}/{NX}, {j+1}/{NY}) -> x={x:.2f}, y={y:.2f}. "
+                f"Point ({i+1}/{nx}, {j+1}/{ny}) -> x={x:.4f}, y={y:.4f}. "
                 f"Press Enter to capture (or 'q' to quit): "
             ).strip()
 
@@ -133,9 +139,9 @@ def main() -> int:
                 print("Done.")
                 return 0
 
-            print(f"  Sampling {SAMPLES_PER_POINT} readings...")
+            print(f"  Sampling {samples_per_point} readings...")
             try:
-                bx, by, bz = read_avg_xyz_gauss(mag)
+                bx, by, bz = read_avg_xyz_gauss(mag, n=samples_per_point, delay_s=sample_delay_s)
             except RuntimeError as e:
                 print(f"  ERROR: {e}", file=sys.stderr)
                 print("  Skipping this measurement. You can re-run later for missing points.")
@@ -145,7 +151,7 @@ def main() -> int:
 
             row = [utc_iso(), x, y, bx, by, bz, b_total, "gauss"]
             try:
-                append_row(CSV_PATH, row)
+                append_row(csv_path, row)
             except RuntimeError as e:
                 print(f"  ERROR: {e}", file=sys.stderr)
                 print("  Measurement taken but could not be saved!", file=sys.stderr)
@@ -153,14 +159,13 @@ def main() -> int:
                 return 3
 
             beep()
-            print(f"  Saved: x={x:.2f}, y={y:.2f}, B_total={b_total:.6f} gauss\n")
+            print(f"  Saved: x={x:.4f}, y={y:.4f}, B_total={b_total:.6f} gauss\n")
 
     print("Grid complete. Done.")
     return 0
 
 
 if __name__ == "__main__":
-    # Only runs when this file is executed directly (not imported)
     try:
         raise SystemExit(main())
     except KeyboardInterrupt:
