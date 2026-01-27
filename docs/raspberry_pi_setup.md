@@ -248,19 +248,60 @@ python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.c
 
 ### 5.4. Generate Heatmap
 
-**IMPORTANT:** Use `mag_data_anomaly.csv` (not `mag_data_clean.csv`).
+The pipeline provides **two different heatmap scripts** for different visualization purposes:
 
-If your anomaly CSV contains `local_anomaly_norm`:
+#### 5.4.1. B_total Heatmap (Field Strength Visualization)
+
+**Purpose:** Visualize the absolute magnetic field strength (B_total) across the area.
+
+**Use when:**
+- You want to see the actual field strength distribution
+- You're doing magnetic detection or field mapping
+- You need unit conversion (gauss ↔ microtesla)
+
+**Input:** `data/processed/mag_data_clean.csv` (from step 5.2)
+
+**Basic usage (gauss units):**
+```bash
+python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv
+```
+
+**With microtesla units:**
+```bash
+python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT
+```
+
+**With custom grid spacing:**
+```bash
+python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT --grid-step 0.01
+```
+
+**Expected outputs:**
+- `data/processed/mag_detection_grid.csv`
+- `data/processed/mag_detection_heatmap.png`
+
+#### 5.4.2. Anomaly Heatmap (Anomaly Detection Visualization)
+
+**Purpose:** Visualize local anomalies (deviations from neighborhood).
+
+**Use when:**
+- You want to see where the field differs from nearby areas
+- You're looking for magnetic anomalies (hot spots, cold spots)
+- You've already run step 5.3 (compute_local_anomaly_v2.py)
+
+**IMPORTANT:** Use `mag_data_anomaly.csv` (from step 5.3, not `mag_data_clean.csv`).
+
+**If your anomaly CSV contains `local_anomaly_norm`:**
 ```bash
 python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly_norm
 ```
 
-If it only contains `local_anomaly`:
+**If it only contains `local_anomaly`:**
 ```bash
 python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 ```
 
-With custom grid spacing:
+**With custom grid spacing:**
 ```bash
 python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly --grid-step 0.01
 ```
@@ -268,6 +309,11 @@ python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly
 **Expected outputs:**
 - `data/exports/<stem>_grid.csv`
 - `data/exports/<stem>_heatmap.png`
+
+**Summary:**
+- **B_total heatmap**: Shows absolute field strength (use `mag_data_clean.csv`)
+- **Anomaly heatmap**: Shows local deviations (use `mag_data_anomaly.csv`)
+- Both scripts use IDW interpolation but serve different analysis purposes
 
 ### 5.5. Organize Run Data
 

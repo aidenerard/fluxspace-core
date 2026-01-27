@@ -1066,15 +1066,23 @@ python mag_to_csv.py 2> /dev/null
 ## Integration with Other Scripts
 
 This script creates CSV files used by:
-- `compute_local_anomaly_v1.py`: Reads `x`, `y`, `B_total` columns
-- `interpolate_to_heatmapV1.py`: Creates heatmaps from point measurements
+- `validate_and_diagnosticsV1.py`: Validates and cleans the data
+- `compute_local_anomaly_v2.py`: Reads `x`, `y`, `B_total` columns to compute anomalies
+- `interpolate_to_Btotal_heatmap.py`: Creates B_total field strength heatmaps
+- `interpolate_to_heatmapV1.py`: Creates anomaly detection heatmaps
 
 **Data flow:**
 ```
-mag_to_csv.py → mag_data.csv → compute_local_anomaly_v1.py → mag_data_with_anomaly.csv
-                                                          ↓
-                                    interpolate_to_heatmapV1.py → heatmap visualization
+mag_to_csv.py → mag_data.csv 
+  → validate_and_diagnosticsV1.py → mag_data_clean.csv
+    → compute_local_anomaly_v2.py → mag_data_anomaly.csv
+      → interpolate_to_heatmapV1.py → anomaly heatmap visualization
+    → interpolate_to_Btotal_heatmap.py → B_total heatmap visualization
 ```
+
+**Two heatmap approaches:**
+- **B_total heatmap** (`interpolate_to_Btotal_heatmap.py`): Visualizes absolute field strength (use `mag_data_clean.csv`)
+- **Anomaly heatmap** (`interpolate_to_heatmapV1.py`): Visualizes local anomalies (use `mag_data_anomaly.csv`)
 
 ---
 
@@ -1100,7 +1108,10 @@ mag_to_csv.py → mag_data.csv → compute_local_anomaly_v1.py → mag_data_with
 ## Next Steps
 
 After collecting data:
-1. **Analyze anomalies:** Run `compute_local_anomaly_v1.py`
-2. **Create visualizations:** Use `interpolate_to_heatmapV1.py`
-3. **Export to GIS:** Import CSV into QGIS or other mapping software
-4. **Further processing:** Use pandas/numpy for custom analysis
+1. **Validate and clean:** Run `validate_and_diagnosticsV1.py`
+2. **Analyze anomalies:** Run `compute_local_anomaly_v2.py`
+3. **Create visualizations:**
+   - **B_total heatmap:** Use `interpolate_to_Btotal_heatmap.py` to visualize field strength
+   - **Anomaly heatmap:** Use `interpolate_to_heatmapV1.py` to visualize local anomalies
+4. **Export to GIS:** Import CSV into QGIS or other mapping software
+5. **Further processing:** Use pandas/numpy for custom analysis

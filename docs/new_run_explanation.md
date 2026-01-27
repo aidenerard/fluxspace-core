@@ -100,7 +100,9 @@ Use this script:
 - Before clearing or overwriting files in the main data directories
 
 **Typical workflow:**
-1. Run the full pipeline: `mag_to_csv.py` → `validate_and_diagnosticsV1.py` → `compute_local_anomaly_v2.py` → `interpolate_to_heatmapV1.py`
+1. Run the full pipeline: `mag_to_csv.py` → `validate_and_diagnosticsV1.py` → `compute_local_anomaly_v2.py` → heatmap visualization
+   - **B_total heatmap:** `interpolate_to_Btotal_heatmap.py` (field strength visualization)
+   - **Anomaly heatmap:** `interpolate_to_heatmapV1.py` (anomaly detection visualization)
 2. Run `./tools/new_run.sh` to archive all outputs
 3. Start a new measurement session (files in `data/raw/`, etc. can be overwritten)
 
@@ -121,7 +123,10 @@ python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
 # Step 3: Compute anomalies
 python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.10 --plot
 
-# Step 4: Create heatmap
+# Step 4a: Create B_total heatmap (field strength)
+python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT --grid-step 0.01
+
+# Step 4b: Create anomaly heatmap (anomaly detection)
 python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly --grid-step 0.01
 
 # Step 5: Organize run data

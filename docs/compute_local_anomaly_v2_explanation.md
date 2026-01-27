@@ -1087,13 +1087,17 @@ mag_to_csv.py
   → mag_data_clean.csv 
   → compute_local_anomaly_v2.py 
   → mag_data_anomaly.csv
+  → interpolate_to_heatmapV1.py (anomaly visualization)
 ```
 
 **Data flow:**
 - `mag_to_csv.py`: Collects raw measurements
 - `validate_and_diagnosticsV1.py`: Validates and flags issues
 - `compute_local_anomaly_v2.py`: Computes local anomalies
+- `interpolate_to_heatmapV1.py`: Creates anomaly heatmap visualization
 - Output can be used in: QGIS, further analysis, visualization
+
+**Note:** The pipeline also provides `interpolate_to_Btotal_heatmap.py` for visualizing absolute field strength (B_total). Use that script with `mag_data_clean.csv` when you want to see the field strength distribution, and use `interpolate_to_heatmapV1.py` with `mag_data_anomaly.csv` when you want to see local anomalies.
 
 ---
 

@@ -23,8 +23,11 @@ The typical data processing workflow follows this sequence:
        Input: data/processed/mag_data_clean.csv
        Output: data/processed/mag_data_anomaly.csv
 
-4. Visualization
-   └─> interpolate_to_heatmapV1.py
+4. Visualization (Two Approaches)
+   ├─> interpolate_to_Btotal_heatmap.py (B_total field strength)
+   │   Input: data/processed/mag_data_clean.csv
+   │   Output: data/processed/mag_detection_grid.csv + heatmap.png
+   └─> interpolate_to_heatmapV1.py (Anomaly detection)
        Input: data/processed/mag_data_anomaly.csv
        Output: data/exports/mag_data_grid.csv + heatmap.png
 ```
@@ -142,36 +145,75 @@ python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.c
 
 ---
 
-### 4. `interpolate_to_heatmapV1.py`
-**Purpose:** Interpolate scattered measurement points onto a regular grid and generate heatmap visualizations.
+### 4a. `interpolate_to_Btotal_heatmap.py`
+**Purpose:** Interpolate B_total (magnetic field strength) onto a regular grid and generate heatmap visualizations.
 
 **What it does:**
-- Takes scattered (x, y, value) points from CSV
-- Interpolates values onto a regular grid using IDW (Inverse Distance Weighting)
+- Takes scattered (x, y, B_total) points from CSV
+- Interpolates B_total values onto a regular grid using IDW (Inverse Distance Weighting)
+- Exports grid data as CSV
+- Generates heatmap PNG visualization
+- Supports unit conversion (gauss ↔ microtesla)
+
+**Key Features:**
+- Vectorized IDW interpolator (efficient for large grids)
+- Unit conversion support (gauss to microtesla)
+- Configurable grid spacing and interpolation power
+- Designed specifically for B_total visualization
+
+**Input:**
+- `data/processed/mag_data_clean.csv` (or any CSV with x, y, B_total)
+
+**Outputs:**
+- `<prefix>_grid.csv` - Regular grid with interpolated B_total values
+- `<prefix>_heatmap.png` - Visual heatmap showing field strength
+
+**Detailed Documentation:** [`interpolate_to_Btotal_heatmap_explanation.md`](./interpolate_to_Btotal_heatmap_explanation.md)
+
+**Example Usage:**
+```bash
+python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT
+python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --grid-step 0.01 --units uT
+```
+
+**When to use:** Use this script when you want to visualize the **absolute magnetic field strength** across the area. This is useful for magnetic detection, field mapping, or understanding the overall field distribution.
+
+---
+
+### 4b. `interpolate_to_heatmapV1.py`
+**Purpose:** Interpolate anomaly detection results onto a regular grid and generate heatmap visualizations.
+
+**What it does:**
+- Takes scattered (x, y, value) points from CSV (typically with `local_anomaly` column)
+- Interpolates anomaly values onto a regular grid using IDW (Inverse Distance Weighting)
 - Exports grid data as CSV
 - Generates heatmap PNG visualization
 - Configurable grid resolution and interpolation power
+- Supports percentile clipping for better visualization
 
 **Key Features:**
 - Lightweight IDW interpolator (no SciPy required)
 - Flexible grid spacing options
 - Tunable interpolation power parameter
+- Percentile-based color scale clipping
 - Quick preview heatmap generation
 
 **Input:**
-- `data/processed/mag_data_anomaly.csv` (or any CSV with x, y, and value column)
+- `data/processed/mag_data_anomaly.csv` (or any CSV with x, y, and value column like `local_anomaly`)
 
 **Outputs:**
 - `<stem>_grid.csv` - Regular grid with interpolated values
 - `<stem>_heatmap.png` - Visual heatmap
 
-**Detailed Documentation:** [`compute_local_anomaly_v2_explanation.md`](./interpolate_to_heatmap.md)
+**Detailed Documentation:** [`interpolate_to_heatmap_explanation.md`](./interpolate_to_heatmap_explanation.md)
 
 **Example Usage:**
 ```bash
 python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --grid-step 0.05
 ```
+
+**When to use:** Use this script when you want to visualize **local anomalies** (deviations from neighborhood). This is useful for anomaly detection, finding hot spots/cold spots, or identifying magnetic disturbances.
 
 ---
 
@@ -213,7 +255,11 @@ python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv --drop-
 python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.30 --plot
 # Output: data/processed/mag_data_anomaly.csv
 
-# Step 4: Create heatmap
+# Step 4a: Create B_total heatmap (field strength visualization)
+python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT --grid-step 0.05
+# Output: data/processed/mag_detection_grid.csv + mag_detection_heatmap.png
+
+# Step 4b: Create anomaly heatmap (anomaly detection visualization)
 python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly --grid-step 0.05
 # Output: data/exports/mag_data_grid.csv + mag_data_heatmap.png
 ```
@@ -265,6 +311,19 @@ Inverse Distance Weighting assigns values to grid points based on:
 - A power parameter (default: 2.0) that controls influence decay
 - Closer points have more influence than distant ones
 
+### Two Heatmap Approaches
+The pipeline provides two different heatmap scripts for different visualization purposes:
+
+1. **`interpolate_to_Btotal_heatmap.py`**: Visualizes **absolute magnetic field strength (B_total)**
+   - Shows the actual field strength across the area
+   - Supports unit conversion (gauss ↔ microtesla)
+   - Use for: Field mapping, magnetic detection, understanding overall field distribution
+
+2. **`interpolate_to_heatmapV1.py`**: Visualizes **local anomalies** (deviations from neighborhood)
+   - Shows where the field differs from nearby areas
+   - Highlights hot spots and cold spots
+   - Use for: Anomaly detection, finding magnetic disturbances, identifying localized features
+
 ---
 
 ## Getting Help
@@ -274,6 +333,8 @@ For detailed explanations of each script, see the individual documentation files
 - [`validate_and_diagnostics_explanation.md`](./validate_and_diagnostics_explanation.md)
 - [`compute_local_anomaly_v2_explanation.md`](./compute_local_anomaly_v2_explanation.md)
 - [`compute_local_anomaly_explanation.md`](./compute_local_anomaly_explanation.md) (v1)
+- [`interpolate_to_Btotal_heatmap_explanation.md`](./interpolate_to_Btotal_heatmap_explanation.md)
+- [`interpolate_to_heatmap_explanation.md`](./interpolate_to_heatmap_explanation.md)
 
 Each documentation file includes:
 - Complete line-by-line code explanations
