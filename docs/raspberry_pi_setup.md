@@ -293,17 +293,17 @@ python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_cl
 
 **If your anomaly CSV contains `local_anomaly_norm`:**
 ```bash
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly_norm
+python3 scripts/interpolate_to_heatmapV2.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly_norm
 ```
 
 **If it only contains `local_anomaly`:**
 ```bash
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
+python3 scripts/interpolate_to_heatmapV2.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 ```
 
 **With custom grid spacing:**
 ```bash
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly --grid-step 0.01
+python3 scripts/interpolate_to_heatmapV2.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly --grid-step 0.01
 ```
 
 **Expected outputs:**
