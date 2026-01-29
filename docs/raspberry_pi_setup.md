@@ -199,7 +199,14 @@ cd ~/fluxspace-core
 mkdir -p data/raw data/processed data/exports data/runs
 ```
 
-### 5.1. Collect Data (mag_to_csv)
+### 5.1. Collect Data (mag_to_csv / mag_to_csv_v2)
+
+You now have **two ways to collect magnetometer data**, depending on your experiment:
+
+- **Grid survey** (structured 2D board scans) → `mag_to_csv.py`
+- **Continuous logger** (free motion, 3D-fusion-ready) → `mag_to_csv_v2.py`
+
+#### 5.1.1. Grid Survey (mag_to_csv.py)
 
 This script uses **auto‑grid mode**:
 - You move the magnetometer to each grid point
@@ -213,6 +220,46 @@ python3 scripts/mag_to_csv.py --out data/raw/mag_data.csv
 
 **Expected output:**
 - `data/raw/mag_data.csv`
+
+Use this when you want a **regular 2D grid** for anomaly maps and B_total heatmaps.
+
+#### 5.1.2. Continuous Logger for 3D Fusion (mag_to_csv_v2.py)
+
+This script logs a **continuous stream** of magnetometer data (no 2D grid), designed to be fused with a 3D trajectory (Polycam Raw Data, RTAB-Map, etc.).
+
+**Basic run (field strength stream while scanning):**
+
+```bash
+python3 scripts/mag_to_csv_v2.py --out data/raw/mag_run01.csv --hz 80 --units uT --samples 1
+```
+
+While it’s running:
+- Press **Enter** to add a `MARK` row.
+- Or type a label (e.g. `start`, `end`) then Enter.
+- Quit with **Ctrl+C** (or type `q` then Enter).
+
+**If reads are noisy, average a bit:**
+
+```bash
+python3 scripts/mag_to_csv_v2.py \
+  --out data/raw/mag_run01.csv \
+  --hz 50 \
+  --units uT \
+  --samples 5 \
+  --sample-delay 0.002
+```
+
+Columns in `mag_run01.csv`:
+
+```text
+t_unix_ns, t_utc_iso, t_rel_s, bx, by, bz, b_total, units, row_type, note
+```
+
+- `row_type = SAMPLE` for normal rows
+- `row_type = MARK` for your Enter/label markers
+- `row_type = INFO` at start (and on sensor read errors)
+
+Use this when you are **moving freely in 3D** and plan to fuse the magnetometer stream with a separate pose/trajectory export.
 
 ### 5.2. Validate and Clean Data
 
