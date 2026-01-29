@@ -2,6 +2,8 @@
 
 Complete guide for setting up your Raspberry Pi and running the magnetic field measurement pipeline.
 
+**New structure:** Run all Python commands from the repo root using **`scripts/`** as entrypoints (e.g. `python3 scripts/mag_to_csv.py`). Implementations live in `pipelines/2d/` and `pipelines/3d/`; the files in `scripts/` are thin wrappers so existing commands still work.
+
 ---
 
 ## Part 1 — Initial Setup (One-time)
