@@ -54,6 +54,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
 # Based on the current parts list for your drone build (frame, motors, 4-in-1 ESC, PDB, Pixhawk 6c, GPS, etc.).
 # This is included in the calibration JSON as helpful context because these parts are typical magnetic
 # interference sources near the magnetometer.
@@ -342,6 +344,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     infile = Path(args.infile)
+    if not infile.is_absolute():
+        infile = _REPO_ROOT / infile
     if not infile.exists():
         print(f"ERROR: input file not found: {infile}", file=sys.stderr)
         return 2
@@ -436,6 +440,8 @@ def main() -> int:
         out_json = infile.with_name(infile.stem + "_calibration.json")
     else:
         out_json = Path(args.out_json)
+        if not out_json.is_absolute():
+            out_json = _REPO_ROOT / out_json
 
     try:
         write_calibration_json(out_json, cal=cal, meta=meta)
@@ -446,7 +452,12 @@ def main() -> int:
 
     # Optional calibrated CSV
     if args.write_calibrated:
-        out_csv = Path(args.out_csv) if args.out_csv is not None else infile.with_name(infile.stem + "_calibrated.csv")
+        if args.out_csv is not None:
+            out_csv = Path(args.out_csv)
+            if not out_csv.is_absolute():
+                out_csv = _REPO_ROOT / out_csv
+        else:
+            out_csv = infile.with_name(infile.stem + "_calibrated.csv")
 
         df_out = df.copy()
         df_out["Bx_cal"] = B_cal[:, 0]
@@ -469,6 +480,8 @@ def main() -> int:
                 plot_out = out_json.with_suffix("").with_name(out_json.stem + "_plot.png")
             else:
                 plot_out = Path(args.plot_out)
+                if not plot_out.is_absolute():
+                    plot_out = _REPO_ROOT / plot_out
             plot_projections(B_raw=B_raw, B_cal=B_cal, out_png=plot_out, show=False)
         else:
             plot_projections(B_raw=B_raw, B_cal=B_cal, out_png=None, show=True)

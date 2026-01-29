@@ -45,8 +45,11 @@ import argparse
 import threading
 import queue
 from datetime import datetime, timezone
+from pathlib import Path
 
 import qwiic_mmc5983ma
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 GAUSS_TO_UT = 100.0  # 1 gauss = 100 microtesla
@@ -234,6 +237,10 @@ def start_marker_thread(marker_q: "queue.Queue[str]"):
 
 def main() -> int:
     args = parse_args()
+    if not os.path.isabs(args.out):
+        args.out = str(_REPO_ROOT / args.out)
+    if args.save_cal and not os.path.isabs(args.save_cal):
+        args.save_cal = str(_REPO_ROOT / args.save_cal)
 
     print("\n=== MMC5983MA Live Calibrate + Zero + Logger ===")
     print(f"Output CSV: {args.out}")

@@ -6,7 +6,7 @@ This document explains every part of the validation and diagnostics script, step
 
 ## Overview
 
-This script reads a magnetometer CSV file (like the one produced by `mag_to_csv.py`), validates it, cleans obvious issues, and generates quick diagnostics including plots and a text report. Run it via the entrypoint `scripts/validate_and_diagnosticsV1.py` (implementation in `pipelines/2d/`). It helps ensure data quality before further analysis by detecting outliers, spikes, and other data quality issues.
+This script reads a magnetometer CSV file (like the one produced by `mag_to_csv.py`), validates it, cleans obvious issues, and generates quick diagnostics including plots and a text report. Run it via the entrypoint `pipelines/2d/validate_and_diagnosticsV1.py` (implementation in `pipelines/2d/`). It helps ensure data quality before further analysis by detecting outliers, spikes, and other data quality issues.
 
 **What it does:**
 - Validates CSV structure and required columns
@@ -18,7 +18,7 @@ This script reads a magnetometer CSV file (like the one produced by `mag_to_csv.
 
 **Typical usage:**
 ```bash
-python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
+python3 pipelines/2d/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
 ```
 
 **Outputs (in `data/processed/` by default):**
@@ -42,7 +42,7 @@ Reads a magnetometer CSV (like the one produced by mag_to_csv.py), validates it,
 cleans obvious issues, and generates quick diagnostics (plots + a text report).
 
 Typical usage:
-  python3 scripts/validate_and_diagnostics.py --in data/raw/mag_data.csv
+  python3 pipelines/2d/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
 
 Outputs (by default) in data/processed/:
   - <stem>_clean.csv

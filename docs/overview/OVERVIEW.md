@@ -6,9 +6,9 @@ This document provides a high-level overview of all scripts in the Fluxspace Cor
 
 ## New structure (2D vs 3D)
 
-- **`scripts/`** = **entrypoints** (stable). Run from repo root, e.g. `python3 scripts/mag_to_csv.py`. Use these paths in docs and automation.
-- **`pipelines/2d/`** and **`pipelines/3d/`** = **implementation**. The real Python code lives here; files in `scripts/` are thin wrappers.
-- **Legacy:** Existing commands still work; wrappers pass through to the implementation. See [PIPELINE_OVERVIEW.md](./PIPELINE_OVERVIEW.md) for when to use 2D vs 3D.
+- **Preferred:** Run from repo root: `python3 pipelines/2d/mag_to_csv.py`, `python3 pipelines/3d/...`, `./tools/3d/new_3d_scan.sh`. Use these paths in docs and automation.
+- **Legacy:** Wrappers under `scripts/2d/` and `scripts/3d/` still work; preferred usage is `pipelines/...` and `tools/3d/`.
+See [PIPELINE_OVERVIEW.md](./PIPELINE_OVERVIEW.md) for when to use 2D vs 3D.
 
 ---
 
@@ -68,7 +68,7 @@ The typical data processing workflow follows this sequence:
 
 **Example Usage:**
 ```bash
-python3 scripts/mag_to_csv.py
+python3 pipelines/2d/mag_to_csv.py
 ```
 
 ---
@@ -110,8 +110,8 @@ python3 scripts/mag_to_csv.py
 
 **Example Usage:**
 ```bash
-python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
-python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv --drop-outliers --z-thresh 5.0
+python3 pipelines/2d/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
+python3 pipelines/2d/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv --drop-outliers --z-thresh 5.0
 ```
 
 ---
@@ -148,7 +148,7 @@ python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv --drop-
 
 **Example Usage:**
 ```bash
-python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.30 --plot
+python3 pipelines/2d/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.30 --plot
 ```
 
 ---
@@ -180,8 +180,8 @@ python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.c
 
 **Example Usage:**
 ```bash
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --grid-step 0.01 --units uT
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --grid-step 0.01 --units uT
 ```
 
 **When to use:** Use this script when you want to visualize the **absolute magnetic field strength** across the area. This is useful for magnetic detection, field mapping, or understanding the overall field distribution.
@@ -217,8 +217,8 @@ python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_cl
 
 **Example Usage:**
 ```bash
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --grid-step 0.05
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --grid-step 0.05
 ```
 
 **When to use:** Use this script when you want to visualize **local anomalies** (deviations from neighborhood). This is useful for anomaly detection, finding hot spots/cold spots, or identifying magnetic disturbances.
@@ -232,17 +232,19 @@ python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly
 
 **Status:** Superseded by `compute_local_anomaly_v2.py` (recommended to use v2)
 
-**Detailed Documentation:** [`compute_local_anomaly_explanation.md`](./compute_local_anomaly_explanation.md)
+**Detailed Documentation:** [`compute_local_anomaly_explanation.md`](../2d/compute_local_anomaly_explanation.md)
 
 ---
 
 ### `calibrate_magnetometerV1.py`
-**Purpose:** (Placeholder - functionality to be implemented)
+**Purpose:** Magnetometer calibration (hard-iron + optional soft-iron) with Earth-field scaling. Implemented in `pipelines/2d/`; run via `scripts/2d/calibrate_magnetometerV1.py`.
+
+**Detailed Documentation:** [calibrate_magnetometer_explanation.md](../2d/calibrate_magnetometer_explanation.md)
 
 ---
 
 ### `run_metadataV1.py`
-**Purpose:** (Placeholder - functionality to be implemented)
+**Purpose:** Placeholder (overview/shared). Implementation can be added in `scripts/overview/` or pipelines. or pipelines as needed. Not yet implemented.
 
 ---
 
@@ -252,23 +254,23 @@ Here's a complete example of running the entire pipeline:
 
 ```bash
 # Step 1: Collect data
-python3 scripts/mag_to_csv.py
+python3 pipelines/2d/mag_to_csv.py
 # Output: data/raw/mag_data.csv
 
 # Step 2: Validate and clean
-python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv --drop-outliers
+python3 pipelines/2d/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv --drop-outliers
 # Output: data/processed/mag_data_clean.csv + diagnostics
 
 # Step 3: Compute anomalies
-python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.30 --plot
+python3 pipelines/2d/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.30 --plot
 # Output: data/processed/mag_data_anomaly.csv
 
 # Step 4a: Create B_total heatmap (field strength visualization)
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT --grid-step 0.05
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT --grid-step 0.05
 # Output: data/processed/mag_detection_grid.csv + mag_detection_heatmap.png
 
 # Step 4b: Create anomaly heatmap (anomaly detection visualization)
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly --grid-step 0.05
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly --grid-step 0.05
 # Output: data/exports/mag_data_grid.csv + mag_data_heatmap.png
 ```
 

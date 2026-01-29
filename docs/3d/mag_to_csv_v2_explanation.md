@@ -33,7 +33,7 @@ t_unix_ns, t_utc_iso, t_rel_s, bx, by, bz, b_total, units, row_type, note
 Basic run (while scanning with Polycam / RTAB-Map):
 
 ```bash
-python3 scripts/mag_to_csv_v2.py --out data/raw/mag_run01.csv --hz 80 --units uT --samples 1
+python3 pipelines/2d/mag_to_csv_v2.py --out data/raw/mag_run01.csv --hz 80 --units uT --samples 1
 ```
 
 While it’s running:
@@ -45,7 +45,7 @@ While it’s running:
 If reads are noisy, average multiple sensor readings per logged row:
 
 ```bash
-python3 scripts/mag_to_csv_v2.py \
+python3 pipelines/2d/mag_to_csv_v2.py \
   --out data/raw/mag_run01.csv \
   --hz 50 \
   --units uT \
@@ -146,7 +146,7 @@ On the Pi (sensor rig):
 cd ~/fluxspace-core
 source ~/fluxenv/bin/activate   # if using a venv
 
-python3 scripts/mag_to_csv_v2.py \
+python3 pipelines/2d/mag_to_csv_v2.py \
   --out data/raw/mag_run01.csv \
   --hz 80 \
   --units uT \

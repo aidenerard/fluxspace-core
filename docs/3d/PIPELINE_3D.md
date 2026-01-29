@@ -6,9 +6,9 @@ End-to-end guide to produce: **(1)** 3D geometry (mesh/point cloud), **(2)** tim
 
 ## New structure (2D vs 3D)
 
-- **`scripts/`** = **entrypoints** (stable). Run these from the repo root, e.g. `python3 scripts/fuse_mag_with_trajectory.py --help`. Shell scripts (e.g. `new_3d_scan.sh`, `backup_usb_3d.sh`) also live here.
-- **`pipelines/2d/`** and **`pipelines/3d/`** = **implementation**. The real Python code for each pipeline lives here; the files in `scripts/` are thin wrappers that call them.
-- **Legacy:** Existing commands like `python3 scripts/mag_to_csv.py` and `python3 scripts/fuse_mag_with_trajectory.py` still work unchanged (wrappers pass through to the implementation).
+- **Preferred:** Run Python from repo root: `python3 pipelines/2d/...` and `python3 pipelines/3d/...`. Run 3D shell scripts from `./tools/3d/` (e.g. `new_3d_scan.sh`, `backup_usb_3d.sh`).
+- **`pipelines/2d/`** and **`pipelines/3d/`** = implementation (and preferred entrypoints for Python).
+- **Legacy:** Wrappers under **`scripts/2d/`** and **`scripts/3d/`**, and shell scripts under **`scripts/3d/`**, still work; preferred usage is **`pipelines/2d/`**, **`pipelines/3d/`**, and **`tools/3d/`** (see [Legacy commands](#legacy-commands) at end).
 
 ---
 
@@ -21,28 +21,28 @@ mkdir -p "$RUN_DIR"/{raw,processed,exports}
 
 # 2. Capture: start magnetometer logger (on Pi), then scan with Polycam/RTAB-Map
 #    Use mag_to_csv_v2.py (or mag_calibrate_zero_logger.py if you have it)
-python3 scripts/mag_to_csv_v2.py --out "$RUN_DIR/raw/mag_run.csv" --hz 80 --units uT --samples 1
+python3 pipelines/2d/mag_to_csv_v2.py --out "$RUN_DIR/raw/mag_run.csv" --hz 80 --units uT --samples 1
 
 # 3. Export trajectory from your scan app (see Capture Day below), put files in $RUN_DIR/raw/
 
 # 4. Processing (on Mac or Pi)
-python3 scripts/polycam_raw_to_trajectory.py --in "$RUN_DIR/raw/PolycamRawExport" --out "$RUN_DIR/processed/trajectory.csv"
-# OR: python3 scripts/rtabmap_poses_to_trajectory.py --in "$RUN_DIR/raw/rtabmap_poses.txt" --out "$RUN_DIR/processed/trajectory.csv"
+python3 pipelines/3d/polycam_raw_to_trajectory.py --in "$RUN_DIR/raw/PolycamRawExport" --out "$RUN_DIR/processed/trajectory.csv"
+# OR: python3 pipelines/3d/rtabmap_poses_to_trajectory.py --in "$RUN_DIR/raw/rtabmap_poses.txt" --out "$RUN_DIR/processed/trajectory.csv"
 
-python3 scripts/fuse_mag_with_trajectory.py \
+python3 pipelines/3d/fuse_mag_with_trajectory.py \
   --trajectory "$RUN_DIR/processed/trajectory.csv" \
   --mag "$RUN_DIR/raw/mag_run.csv" \
   --extrinsics "$RUN_DIR/raw/extrinsics.json" \
   --out "$RUN_DIR/processed/mag_world.csv" \
   --value-type zero_mag
 
-python3 scripts/mag_world_to_voxel_volume.py \
+python3 pipelines/3d/mag_world_to_voxel_volume.py \
   --in "$RUN_DIR/processed/mag_world.csv" \
   --out "$RUN_DIR/exports/volume.npz" \
   --voxel-size 0.02 \
   --margin 0.1
 
-python3 scripts/visualize_3d_heatmap.py \
+python3 pipelines/3d/visualize_3d_heatmap.py \
   --volume "$RUN_DIR/exports/volume.npz" \
   --out-dir "$RUN_DIR/exports" \
   --screenshot
@@ -90,14 +90,14 @@ Expected outputs: `trajectory.csv`, `mag_world.csv`, `volume.npz`, and `exports/
 
 You can keep 3D scan snapshots in a **separate tree** so they don’t mix with 2D runs:
 
-- **2D pipeline:** Still uses `data/runs/` and `./tools/new_run.sh`, `./tools/backup_runs_to_usb.sh` (unchanged).
+- **2D pipeline:** Still uses `data/runs/` and `./tools/2d/new_run.sh`, `./tools/2d/backup_runs_to_usb.sh` (unchanged).
 - **3D pipeline:** Use `data/scans/<RUN_ID>__3d/` (or `data/scans/<RUN_ID>__3d__<label>/`).
 
 **Create a 3D scan snapshot** (copies current `data/raw`, `data/processed`, `data/exports` into a new scan folder):
 
 ```bash
-./scripts/new_3d_scan.sh
-./scripts/new_3d_scan.sh --label block01
+./tools/3d/new_3d_scan.sh
+./tools/3d/new_3d_scan.sh --label block01
 ```
 
 **Examples:** `data/scans/01-29-2026_13-57__3d/`, `data/scans/01-29-2026_13-57__3d__block01/`
@@ -105,10 +105,10 @@ You can keep 3D scan snapshots in a **separate tree** so they don’t mix with 2
 **Back up 3D scans to USB only:**
 
 ```bash
-./scripts/backup_usb_3d.sh
+./tools/3d/backup_usb_3d.sh
 ```
 
-Backs up `data/scans/` → `/media/fluxspace/FLUXSPACE/fluxspace_scans_backup/`. Mount/unmount USB as in the main runbook (see docs). The 2D runs backup is separate (`./tools/backup_runs_to_usb.sh`).
+Backs up `data/scans/` → `/media/fluxspace/FLUXSPACE/fluxspace_scans_backup/`. Mount/unmount USB as in the main runbook (see docs). The 2D runs backup is separate (`./tools/2d/backup_runs_to_usb.sh`).
 
 ---
 
@@ -161,7 +161,7 @@ export RUN_DIR="data/runs/run_$(date +%Y%m%d_%H%M)"
 mkdir -p "$RUN_DIR/raw"
 
 # Option A: Calibrate + zero + log (recommended)
-python3 scripts/mag_calibrate_zero_logger.py \
+python3 pipelines/3d/mag_calibrate_zero_logger.py \
   --out "$RUN_DIR/raw/mag_run.csv" \
   --hz 80 \
   --units uT \
@@ -173,7 +173,7 @@ python3 scripts/mag_calibrate_zero_logger.py \
 **Option B:** Log only (no calibration/zero), e.g. for quick tests:
 
 ```bash
-python3 scripts/mag_to_csv_v2.py \
+python3 pipelines/2d/mag_to_csv_v2.py \
   --out "$RUN_DIR/raw/mag_run.csv" \
   --hz 80 \
   --units uT \
@@ -211,7 +211,7 @@ All commands use the same `RUN_DIR`. Run from repo root.
 **Option A — Polycam Raw Data**
 
 ```bash
-python3 scripts/polycam_raw_to_trajectory.py \
+python3 pipelines/3d/polycam_raw_to_trajectory.py \
   --in "$RUN_DIR/raw/PolycamRawExport" \
   --out "$RUN_DIR/processed/trajectory.csv"
 ```
@@ -221,7 +221,7 @@ If timestamps are missing, script uses frame order and prints a warning; output 
 **Option B — RTAB-Map poses**
 
 ```bash
-python3 scripts/rtabmap_poses_to_trajectory.py \
+python3 pipelines/3d/rtabmap_poses_to_trajectory.py \
   --in "$RUN_DIR/raw/rtabmap_poses.txt" \
   --out "$RUN_DIR/processed/trajectory.csv" \
   --format TUM
@@ -232,7 +232,7 @@ Output: same columns, `t_rel_s` normalized from first pose.
 ### Step 2: Fuse magnetometer with trajectory
 
 ```bash
-python3 scripts/fuse_mag_with_trajectory.py \
+python3 pipelines/3d/fuse_mag_with_trajectory.py \
   --trajectory "$RUN_DIR/processed/trajectory.csv" \
   --mag "$RUN_DIR/raw/mag_run.csv" \
   --extrinsics "$RUN_DIR/raw/extrinsics.json" \
@@ -250,7 +250,7 @@ Expected output: `mag_world.csv` with columns `t_rel_s, x, y, z, value, value_ty
 ### Step 3: Voxel volume
 
 ```bash
-python3 scripts/mag_world_to_voxel_volume.py \
+python3 pipelines/3d/mag_world_to_voxel_volume.py \
   --in "$RUN_DIR/processed/mag_world.csv" \
   --out "$RUN_DIR/exports/volume.npz" \
   --voxel-size 0.02 \
@@ -264,7 +264,7 @@ python3 scripts/mag_world_to_voxel_volume.py \
 ### Step 4: 3D visualization
 
 ```bash
-python3 scripts/visualize_3d_heatmap.py \
+python3 pipelines/3d/visualize_3d_heatmap.py \
   --volume "$RUN_DIR/exports/volume.npz" \
   --out-dir "$RUN_DIR/exports" \
   --screenshot
@@ -372,3 +372,10 @@ If a script needs a missing dependency, it will print a clear error and the pack
 | Viz | `exports/heatmap_3d_screenshot.png` | Slice + isosurface view; optional HTML |
 
 All scripts use **argparse**, **clear prints** of inputs/outputs, and write into the **run folder**; defaults are set for reproducible runs.
+
+---
+
+## Legacy commands
+
+- **Python:** Wrappers under **`scripts/2d/`** and **`scripts/3d/`** still work; preferred usage is **`python3 pipelines/2d/<script>.py`** and **`python3 pipelines/3d/<script>.py`**.
+- **Shell:** **`./scripts/3d/new_3d_scan.sh`** and **`./scripts/3d/backup_usb_3d.sh`** remain for backward compatibility; preferred usage is **`./tools/3d/new_3d_scan.sh`** and **`./tools/3d/backup_usb_3d.sh`**.

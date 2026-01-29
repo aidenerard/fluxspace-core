@@ -237,10 +237,14 @@ def plot_heatmap(
     plt.close()
 
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
 def main() -> int:
     args = parse_args()
     infile = Path(args.infile)
-
+    if not infile.is_absolute():
+        infile = _REPO_ROOT / infile
     if not infile.exists():
         print(f"ERROR: input file not found: {infile}", file=sys.stderr)
         return 2
@@ -277,6 +281,8 @@ def main() -> int:
     ymin, ymax = float(np.min(y)), float(np.max(y))
 
     outdir = resolve_outdir(infile, args.outdir)
+    if not outdir.is_absolute():
+        outdir = _REPO_ROOT / outdir
     outdir.mkdir(parents=True, exist_ok=True)
 
     stem = infile.stem

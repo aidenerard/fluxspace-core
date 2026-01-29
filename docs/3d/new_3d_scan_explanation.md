@@ -1,6 +1,6 @@
 # Explanation of `new_3d_scan.sh`
 
-This document explains the 3D scan snapshot script that creates timestamped folders under `data/scans/` and copies current pipeline outputs into them. It does **not** modify the 2D pipeline or `tools/new_run.sh`.
+This document explains the 3D scan snapshot script that creates timestamped folders under `data/scans/` and copies current pipeline outputs into them. It does **not** modify the 2D pipeline or `tools/2d/new_run.sh`.
 
 ---
 
@@ -21,8 +21,8 @@ This document explains the 3D scan snapshot script that creates timestamped fold
 **Typical usage:**
 ```bash
 cd ~/fluxspace-core
-./scripts/new_3d_scan.sh
-./scripts/new_3d_scan.sh --label block01
+./tools/3d/new_3d_scan.sh
+./tools/3d/new_3d_scan.sh --label block01
 ```
 
 **Expected output:**
@@ -45,7 +45,7 @@ cd ~/fluxspace-core
 - **Timestamp:** `RUN_ID=$(TZ="America/New_York" date +"%m-%d-%Y_%H-%M")` — same convention as the 2D run script.
 - **Copy:** Uses `cp -a` (or equivalent) with safe quoting; copies fail gracefully (`|| true`) if a source directory is missing or empty.
 - **Repo root:** Script expects to be run from the repo root (uses `REPO_ROOT` if set, else `$HOME/fluxspace-core`).
-- **No 2D changes:** Does not call or edit `tools/new_run.sh` or any 2D pipeline script.
+- **No 2D changes:** Does not call or edit `tools/2d/new_run.sh` or any 2D pipeline script.
 
 ---
 
@@ -59,7 +59,7 @@ cd ~/fluxspace-core
 
 ## Relation to 2D pipeline
 
-- **2D:** `./tools/new_run.sh` → `data/runs/<RUN_ID>/` (unchanged).
-- **3D:** `./scripts/new_3d_scan.sh` → `data/scans/<RUN_ID>__3d/` or `data/scans/<RUN_ID>__3d__<label>/`.
+- **2D:** `./tools/2d/new_run.sh` → `data/runs/<RUN_ID>/` (unchanged).
+- **3D:** `./tools/3d/new_3d_scan.sh` → `data/scans/<RUN_ID>__3d/` or `data/scans/<RUN_ID>__3d__<label>/`.
 
-Backup is also separate: 2D runs → `./tools/backup_runs_to_usb.sh`; 3D scans → `./scripts/backup_usb_3d.sh`.
+Backup is also separate: 2D runs → `./tools/2d/backup_runs_to_usb.sh`; 3D scans → `./tools/3d/backup_usb_3d.sh`.

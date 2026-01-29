@@ -24,6 +24,8 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -305,7 +307,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     infile = Path(args.infile)
+    if not infile.is_absolute():
+        infile = _REPO_ROOT / infile
     outdir = Path(args.outdir)
+    if not outdir.is_absolute():
+        outdir = _REPO_ROOT / outdir
 
     if not infile.exists():
         print(f"ERROR: input file not found: {infile}", file=sys.stderr)

@@ -10,14 +10,14 @@ This document explains the wrapper script that provides a single, obvious comman
 
 **What it does:**
 - Prints: “Backing up 3D scans to USB…”
-- Calls `scripts/backup_scans_to_usb.sh` (from the same repo, using the script’s directory to resolve the path)
+- Calls `tools/3d/backup_scans_to_usb.sh` (from the same repo, using the script’s directory to resolve the path)
 - On success: prints “Backup complete: 3D scans”
 - On failure: exits with the same non-zero exit code as `backup_scans_to_usb.sh`
 
 **Typical usage:**
 ```bash
 cd ~/fluxspace-core
-./scripts/backup_usb_3d.sh
+./tools/3d/backup_usb_3d.sh
 ```
 
 ---
@@ -31,5 +31,5 @@ cd ~/fluxspace-core
 
 ## Relation to other scripts
 
-- **`scripts/backup_scans_to_usb.sh`** — Performs the actual rsync and checks; this script only invokes it.
-- **`tools/backup_runs_to_usb.sh`** — Unchanged; use it for 2D runs backup. Do not use `backup_usb_3d.sh` for 2D runs.
+- **`tools/3d/backup_scans_to_usb.sh`** — Performs the actual rsync and checks; this script only invokes it.
+- **`tools/2d/backup_runs_to_usb.sh`** — Unchanged; use it for 2D runs backup. Do not use `backup_usb_3d.sh` for 2D runs.

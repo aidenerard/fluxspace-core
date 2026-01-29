@@ -5,9 +5,12 @@ import time
 import math
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 import argparse
 
 import qwiic_mmc5983ma
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def parse_args():
@@ -97,8 +100,9 @@ def beep():
 
 def main() -> int:
     args = parse_args()
-
     csv_path = args.out
+    if not os.path.isabs(csv_path):
+        csv_path = str(_REPO_ROOT / csv_path)
     nx, ny = args.nx, args.ny
     dx, dy = args.dx, args.dy
     x0, y0 = args.x0, args.y0

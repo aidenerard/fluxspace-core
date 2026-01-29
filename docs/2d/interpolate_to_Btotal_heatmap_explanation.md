@@ -19,13 +19,13 @@ This script takes scattered measurement points (x, y, B_total) from a CSV file a
 **Typical usage:**
 ```bash
 # Basic usage (default: gauss units)
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv
 
 # With microtesla units
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT
 
 # Custom grid spacing
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --grid-step 0.01 --units uT
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --grid-step 0.01 --units uT
 ```
 
 **Outputs:**
@@ -143,13 +143,13 @@ This function defines all command-line arguments the script accepts:
 **Example usage:**
 ```bash
 # Basic usage (gauss units)
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv
 
 # Microtesla units with custom grid spacing
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT --grid-step 0.05
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT --grid-step 0.05
 
 # Custom output location and prefix
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --out-dir data/exports --out-prefix Btotal_map
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --out-dir data/exports --out-prefix Btotal_map
 ```
 
 ---
@@ -637,7 +637,7 @@ The Fluxspace Core pipeline has **two different heatmap scripts** for different 
 
 **Example:**
 ```bash
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT
 ```
 
 ### `interpolate_to_heatmapV1.py`
@@ -657,7 +657,7 @@ python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_cl
 
 **Example:**
 ```bash
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 ```
 
 **Typical workflow:**
@@ -739,13 +739,13 @@ This script is typically used **after validation** in the Fluxspace Core pipelin
 
 ```bash
 # Step 1: Collect data
-python3 scripts/mag_to_csv.py
+python3 pipelines/2d/mag_to_csv.py
 
 # Step 2: Validate and clean
-python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
+python3 pipelines/2d/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
 
 # Step 3: Create B_total heatmap
-python3 scripts/interpolate_to_Btotal_heatmap.py \
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py \
     --in data/processed/mag_data_clean.csv \
     --units uT \
     --grid-step 0.01
@@ -757,13 +757,13 @@ python3 scripts/interpolate_to_Btotal_heatmap.py \
 # Steps 1-2: Same as above
 
 # Step 3: Compute anomalies
-python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.30
+python3 pipelines/2d/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.30
 
 # Step 4a: B_total visualization (field strength)
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT
 
 # Step 4b: Anomaly visualization (anomaly detection)
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 ```
 
 ---

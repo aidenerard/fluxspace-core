@@ -1,6 +1,6 @@
 # Explanation of `backup_scans_to_usb.sh`
 
-This document explains the script that backs up **only 3D scans** (`data/scans/`) to a USB drive in a separate directory. It does **not** modify `tools/backup_runs_to_usb.sh` or the 2D runs backup.
+This document explains the script that backs up **only 3D scans** (`data/scans/`) to a USB drive in a separate directory. It does **not** modify `tools/2d/backup_runs_to_usb.sh` or the 2D runs backup.
 
 ---
 
@@ -23,7 +23,7 @@ This document explains the script that backs up **only 3D scans** (`data/scans/`
 ```bash
 cd ~/fluxspace-core
 # Mount USB first (see main runbook: mount at /media/fluxspace/FLUXSPACE)
-./scripts/backup_scans_to_usb.sh
+./tools/3d/backup_scans_to_usb.sh
 ```
 
 ---
@@ -45,7 +45,7 @@ cd ~/fluxspace-core
 
 ## Relation to 2D backup
 
-- **2D runs:** `./tools/backup_runs_to_usb.sh` → backs up `data/runs/` to `fluxspace_runs_backup/` (unchanged).
-- **3D scans:** `./scripts/backup_scans_to_usb.sh` → backs up `data/scans/` to `fluxspace_scans_backup/`.
+- **2D runs:** `./tools/2d/backup_runs_to_usb.sh` → backs up `data/runs/` to `fluxspace_runs_backup/` (unchanged).
+- **3D scans:** `./tools/3d/backup_scans_to_usb.sh` → backs up `data/scans/` to `fluxspace_scans_backup/`.
 
 Both use the same USB mount path; only the source and destination subfolders differ.

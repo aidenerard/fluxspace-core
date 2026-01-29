@@ -2,7 +2,7 @@
 
 Complete guide for setting up your Raspberry Pi and running the magnetic field measurement pipeline.
 
-**New structure:** Run all Python commands from the repo root using **`scripts/`** as entrypoints (e.g. `python3 scripts/mag_to_csv.py`). Implementations live in `pipelines/2d/` and `pipelines/3d/`; the files in `scripts/` are thin wrappers so existing commands still work.
+**Preferred:** Run Python from repo root: **`python3 pipelines/2d/<script>.py`** and **`python3 pipelines/3d/<script>.py`**. Run 2D tools: **`./tools/2d/new_run.sh`**, **`./tools/2d/backup_runs_to_usb.sh`**. Run 3D tools: **`./tools/3d/new_3d_scan.sh`**, **`./tools/3d/backup_usb_3d.sh`**. Legacy wrappers under `scripts/2d/` and `scripts/3d/` still work.
 
 ---
 
@@ -48,7 +48,7 @@ cd ~/fluxspace-core
 git pull
 ```
 
-**Note:** Make sure `tools/setup_pi.sh` exists in the repo. If it doesn't, create it first (the script should already be in your repo from the setup).
+**Note:** Make sure `tools/2d/setup_pi.sh` exists in the repo. If it doesn't, create it first (the script should already be in your repo from the setup).
 
 ---
 
@@ -60,8 +60,8 @@ Once you've SSH'd into the Pi and cloned the repo, run the automated setup scrip
 
 ```bash
 cd ~/fluxspace-core
-chmod +x tools/setup_pi.sh
-./tools/setup_pi.sh
+chmod +x tools/2d/setup_pi.sh
+./tools/2d/setup_pi.sh
 ```
 
 **What it does:**
@@ -149,7 +149,7 @@ You should see `30` in the table when the sensor is connected.
 
 ### 4.4. Optional: Run Smoke Test
 ```bash
-python3 tools/mmc5983ma_smoketest.py
+python3 tools/2d/mmc5983ma_smoketest.py
 ```
 
 Should print: `✅ MMC5983MA responding on I2C at address 0x30`
@@ -217,7 +217,7 @@ This script uses **auto‑grid mode**:
 - Repeats until "Grid complete"
 
 ```bash
-python3 scripts/mag_to_csv.py --out data/raw/mag_data.csv
+python3 pipelines/2d/mag_to_csv.py --out data/raw/mag_data.csv
 ```
 
 **Expected output:**
@@ -232,7 +232,7 @@ This script logs a **continuous stream** of magnetometer data (no 2D grid), desi
 **Basic run (field strength stream while scanning):**
 
 ```bash
-python3 scripts/mag_to_csv_v2.py --out data/raw/mag_run01.csv --hz 80 --units uT --samples 1
+python3 pipelines/2d/mag_to_csv_v2.py --out data/raw/mag_run01.csv --hz 80 --units uT --samples 1
 ```
 
 While it’s running:
@@ -243,7 +243,7 @@ While it’s running:
 **If reads are noisy, average a bit:**
 
 ```bash
-python3 scripts/mag_to_csv_v2.py \
+python3 pipelines/2d/mag_to_csv_v2.py \
   --out data/raw/mag_run01.csv \
   --hz 50 \
   --units uT \
@@ -266,12 +266,12 @@ Use this when you are **moving freely in 3D** and plan to fuse the magnetometer 
 ### 5.2. Validate and Clean Data
 
 ```bash
-python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
+python3 pipelines/2d/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
 ```
 
 To drop flagged outliers:
 ```bash
-python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv --drop-outliers
+python3 pipelines/2d/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv --drop-outliers
 ```
 
 **Expected outputs:**
@@ -284,12 +284,12 @@ python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv --drop-
 For a 25cm × 25cm board using ~5cm spacing, use **radius = 0.10m** (≈ two grid steps):
 
 ```bash
-python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.10 --plot
+python3 pipelines/2d/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.10 --plot
 ```
 
 To drop rows where `_flag_any` is true (if present):
 ```bash
-python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.10 --drop-flag-any --plot
+python3 pipelines/2d/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.10 --drop-flag-any --plot
 ```
 
 **Expected output:**
@@ -312,17 +312,17 @@ The pipeline provides **two different heatmap scripts** for different visualizat
 
 **Basic usage (gauss units):**
 ```bash
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv
 ```
 
 **With microtesla units:**
 ```bash
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT
 ```
 
 **With custom grid spacing:**
 ```bash
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT --grid-step 0.01
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT --grid-step 0.01
 ```
 
 **Expected outputs:**
@@ -342,17 +342,17 @@ python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_cl
 
 **If your anomaly CSV contains `local_anomaly_norm`:**
 ```bash
-python3 scripts/interpolate_to_heatmapV2.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly_norm
+python3 pipelines/2d/interpolate_to_heatmapV2.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly_norm
 ```
 
 **If it only contains `local_anomaly`:**
 ```bash
-python3 scripts/interpolate_to_heatmapV2.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
+python3 pipelines/2d/interpolate_to_heatmapV2.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 ```
 
 **With custom grid spacing:**
 ```bash
-python3 scripts/interpolate_to_heatmapV2.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly --grid-step 0.01
+python3 pipelines/2d/interpolate_to_heatmapV2.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly --grid-step 0.01
 ```
 
 **Expected outputs:**
@@ -370,7 +370,7 @@ python3 scripts/interpolate_to_heatmapV2.py --in data/processed/mag_data_anomaly
 
 ```bash
 cd ~/fluxspace-core
-./tools/new_run.sh
+./tools/2d/new_run.sh
 ```
 
 This creates a timestamped folder in `data/runs/` (e.g., `data/runs/12-28-2024_14-30`). Copy or note this path—you'll use it for this session's outputs.
@@ -413,7 +413,7 @@ You should see `FLUXSPACE` directory.
 
 ```bash
 cd ~/fluxspace-core
-./tools/backup_runs_to_usb.sh
+./tools/2d/backup_runs_to_usb.sh
 ```
 
 This syncs all runs from `data/runs/` to your USB drive at `/media/fluxspace/FLUXSPACE/fluxspace_runs_backup/`.
@@ -467,7 +467,7 @@ Stop the process (close terminals/files using the USB, or kill the process), the
 
 ### 5.8. Alternative storage: 3D scans (data/scans/*__3d)
 
-The **2D pipeline is unchanged** and still uses `data/runs/` and the existing scripts (`./tools/new_run.sh`, `./tools/backup_runs_to_usb.sh`).
+The **2D pipeline is unchanged** and still uses `data/runs/` and the existing scripts (`./tools/2d/new_run.sh`, `./tools/2d/backup_runs_to_usb.sh`).
 
 For the **3D pipeline** (Polycam/RTAB-Map + magnetometer fusion), you can use a separate storage path so 3D scan snapshots stay distinct:
 
@@ -478,13 +478,13 @@ For the **3D pipeline** (Polycam/RTAB-Map + magnetometer fusion), you can use a 
 
 ```bash
 cd ~/fluxspace-core
-./scripts/new_3d_scan.sh
+./tools/3d/new_3d_scan.sh
 ```
 
 With an optional label (e.g. block name):
 
 ```bash
-./scripts/new_3d_scan.sh --label block01
+./tools/3d/new_3d_scan.sh --label block01
 ```
 
 **Examples:**
@@ -496,10 +496,10 @@ Each scan folder contains `raw/`, `processed/`, `exports/`, and `config/` (for e
 **Back up 3D scans to USB** (separate from 2D runs backup):
 
 ```bash
-./scripts/backup_usb_3d.sh
+./tools/3d/backup_usb_3d.sh
 ```
 
-This backs up only `data/scans/` to `/media/fluxspace/FLUXSPACE/fluxspace_scans_backup/`. Mount/unmount USB the same way as for 2D (see 5.6.1 and 5.7). The 2D runs backup script is not modified; use `./tools/backup_runs_to_usb.sh` for 2D runs as before.
+This backs up only `data/scans/` to `/media/fluxspace/FLUXSPACE/fluxspace_scans_backup/`. Mount/unmount USB the same way as for 2D (see 5.6.1 and 5.7). The 2D runs backup script is not modified; use `./tools/2d/backup_runs_to_usb.sh` for 2D runs as before.
 
 ---
 
@@ -523,19 +523,19 @@ You should see:
 Do TWO runs to establish baseline and detect anomalies:
 
 ### 7.1. Baseline Run
-1. Create new run folder: `./tools/new_run.sh`
+1. Create new run folder: `./tools/2d/new_run.sh`
 2. Cardboard only, no nearby metal
 3. Run the full pipeline (5.1 → 5.4)
 4. This establishes your "normal" magnetic field
-5. Backup to USB: `./tools/backup_runs_to_usb.sh`
+5. Backup to USB: `./tools/2d/backup_runs_to_usb.sh`
 
 ### 7.2. Stimulus Run (Introduce Metal)
-1. Create new run folder: `./tools/new_run.sh`
+1. Create new run folder: `./tools/2d/new_run.sh`
 2. Place steel/rebar near/under board at known location
 3. Rerun the same grid pattern
 4. Run the full pipeline (5.1 → 5.4)
 5. Compare heatmaps + anomaly CSV
-6. Backup to USB: `./tools/backup_runs_to_usb.sh`
+6. Backup to USB: `./tools/2d/backup_runs_to_usb.sh`
 
 The difference between baseline and stimulus shows the metal's effect.
 
@@ -559,25 +559,25 @@ source ~/fluxenv/bin/activate
 mkdir -p data/raw data/processed data/exports data/runs
 
 # Create new run folder for this session
-./tools/new_run.sh
+./tools/2d/new_run.sh
 
 # Optional: verify sensor is detected
 i2cdetect -y 1
 
 # Step 1: Collect data
-python3 scripts/mag_to_csv.py --out data/raw/mag_data.csv
+python3 pipelines/2d/mag_to_csv.py --out data/raw/mag_data.csv
 
 # Step 2: Validate and clean
-python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
+python3 pipelines/2d/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
 
 # Step 3: Compute anomalies
-python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.10 --plot
+python3 pipelines/2d/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.10 --plot
 
 # Step 4: Generate heatmap
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 
 # Step 5: Backup to USB (optional, but recommended)
-./tools/backup_runs_to_usb.sh
+./tools/2d/backup_runs_to_usb.sh
 
 ls data/runs
 ```
@@ -605,7 +605,7 @@ pip install sparkfun-qwiic sparkfun-qwiic-mmc5983ma
 - `sparkfun-qwiic` (base Qwiic library)
 - `sparkfun-qwiic-mmc5983ma` (MMC5983MA-specific driver)
 
-The automated setup script (`tools/setup_pi.sh`) installs both automatically.
+The automated setup script (`tools/2d/setup_pi.sh`) installs both automatically.
 
 ### 9.3. "File not found" when a script reads input
 Double-check your filenames:
@@ -725,7 +725,7 @@ Wait ~20 seconds, then unplug power.
 **One-time setup:**
 1. SSH into Pi
 2. Clone repo
-3. Run `./tools/setup_pi.sh`
+3. Run `./tools/2d/setup_pi.sh`
 4. Reboot
 5. Verify with `i2cdetect` and Python import
 
@@ -733,9 +733,9 @@ Wait ~20 seconds, then unplug power.
 1. SSH into Pi
 2. (Optional) Start/attach tmux: `tmux new -s flux` or `tmux attach -t flux`
 3. `cd ~/fluxspace-core && source ~/fluxenv/bin/activate`
-4. Create new run folder: `./tools/new_run.sh`
+4. Create new run folder: `./tools/2d/new_run.sh`
 5. Run pipeline (5.1 → 5.4)
-6. Backup to USB: `./tools/backup_runs_to_usb.sh`
+6. Backup to USB: `./tools/2d/backup_runs_to_usb.sh`
 7. (If using tmux) Detach before disconnecting: Ctrl+b, then d
 
 **That's it!** The automated setup script handles all the complexity. Use tmux for persistent sessions, especially on unstable connections. Always backup your runs to USB after each test session.

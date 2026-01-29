@@ -41,10 +41,10 @@ This script takes scattered measurement points (x, y, value) from a CSV file and
 **Typical usage:**
 ```bash
 # Basic usage (outputs to data/exports/ by default)
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 
 # Custom grid spacing
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --grid-step 0.05 --power 2.5
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --grid-step 0.05 --power 2.5
 ```
 
 **Outputs:** ⚠️ **CHANGED: Default output location**
@@ -254,19 +254,19 @@ This function defines all command-line arguments the script accepts:
 **Example usage:**
 ```bash
 # Basic usage (outputs to data/exports by default)
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly
 
 # Custom grid spacing
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/file.csv --grid-step 0.05
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/file.csv --grid-step 0.05
 
 # Custom power and explicit output directory
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/file.csv --power 2.5 --out-dir data/exports
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/file.csv --power 2.5 --out-dir data/exports
 
 # Filter flagged data
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/file.csv --drop-flag-any
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/file.csv --drop-flag-any
 
 # Generate only CSV, no PNG
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/file.csv --no-plot
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/file.csv --no-plot
 ```
 
 ---
@@ -1070,16 +1070,16 @@ This script is typically the **final step** in the Fluxspace Core pipeline:
 
 ```bash
 # Step 1: Collect data
-python3 scripts/mag_to_csv.py
+python3 pipelines/2d/mag_to_csv.py
 
 # Step 2: Validate and clean
-python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
+python3 pipelines/2d/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
 
 # Step 3: Compute anomalies
-python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.30
+python3 pipelines/2d/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.30
 
 # Step 4: Create heatmap (--out-dir is now optional, defaults to data/exports)
-python3 scripts/interpolate_to_heatmapV1.py \
+python3 pipelines/2d/interpolate_to_heatmapV1.py \
     --in data/processed/mag_data_anomaly.csv \
     --value-col local_anomaly \
     --grid-step 0.05

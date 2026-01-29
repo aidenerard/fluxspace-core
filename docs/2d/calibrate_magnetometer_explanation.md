@@ -26,10 +26,10 @@ The script takes a CSV file containing raw magnetometer measurements (Bx, By, Bz
 **Typical usage:**
 ```bash
 # Basic calibration fit
-python3 scripts/calibrate_magnetometerV1.py --in data/raw/mag_cal.csv --method ellipsoid --earth-field-ut 52
+python3 pipelines/2d/calibrate_magnetometerV1.py --in data/raw/mag_cal.csv --method ellipsoid --earth-field-ut 52
 
 # Fit calibration + write calibrated CSV + save plots
-python3 scripts/calibrate_magnetometerV1.py --in data/raw/mag_cal.csv --method minmax --earth-field-ut 50 \
+python3 pipelines/2d/calibrate_magnetometerV1.py --in data/raw/mag_cal.csv --method minmax --earth-field-ut 50 \
     --write-calibrated --plot --no-show
 ```
 
@@ -1022,7 +1022,7 @@ Defines and parses all command-line arguments. The script uses argparse to handl
 
 **Example usage:**
 ```bash
-python3 scripts/calibrate_magnetometerV1.py \
+python3 pipelines/2d/calibrate_magnetometerV1.py \
     --in data/raw/mag_cal.csv \
     --method ellipsoid \
     --earth-field-ut 52.0 \
@@ -1368,16 +1368,16 @@ Before running calibration, you need to collect data by rotating the magnetomete
 
 ```bash
 # Simple calibration with default settings
-python3 scripts/calibrate_magnetometerV1.py --in data/raw/mag_cal.csv
+python3 pipelines/2d/calibrate_magnetometerV1.py --in data/raw/mag_cal.csv
 
 # Use ellipsoid method with Earth field scaling
-python3 scripts/calibrate_magnetometerV1.py \
+python3 pipelines/2d/calibrate_magnetometerV1.py \
     --in data/raw/mag_cal.csv \
     --method ellipsoid \
     --earth-field-ut 52.0
 
 # Full workflow: calibrate + write calibrated CSV + save plots
-python3 scripts/calibrate_magnetometerV1.py \
+python3 pipelines/2d/calibrate_magnetometerV1.py \
     --in data/raw/mag_cal.csv \
     --method ellipsoid \
     --earth-field-ut 50.0 \
@@ -1562,7 +1562,7 @@ Bx,By,Bz
 
 **Command:**
 ```bash
-python3 scripts/calibrate_magnetometerV1.py --in data/raw/mag_cal.csv
+python3 pipelines/2d/calibrate_magnetometerV1.py --in data/raw/mag_cal.csv
 ```
 
 **Output:**
@@ -1581,7 +1581,7 @@ python3 scripts/calibrate_magnetometerV1.py --in data/raw/mag_cal.csv
 
 **Command:**
 ```bash
-python3 scripts/calibrate_magnetometerV1.py \
+python3 pipelines/2d/calibrate_magnetometerV1.py \
     --in data/raw/mag_cal.csv \
     --method ellipsoid \
     --earth-field-ut 52.0 \
@@ -1603,7 +1603,7 @@ If your CSV has a `power_state` column with values "OFF" and "ON":
 
 **Command:**
 ```bash
-python3 scripts/calibrate_magnetometerV1.py \
+python3 pipelines/2d/calibrate_magnetometerV1.py \
     --in data/raw/mag_cal.csv \
     --segment-col power_state \
     --segment-a OFF \

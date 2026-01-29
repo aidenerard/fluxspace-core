@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Tuple
 
 import numpy as np
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -142,9 +144,12 @@ def idw_interpolate(
 
 def main() -> int:
     args = parse_args()
-
     in_path = Path(args.in_path)
+    if not in_path.is_absolute():
+        in_path = _REPO_ROOT / in_path
     out_dir = Path(args.out_dir)
+    if not out_dir.is_absolute():
+        out_dir = _REPO_ROOT / out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
     grid_csv = out_dir / "mag_detection_grid.csv"

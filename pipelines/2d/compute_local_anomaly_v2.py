@@ -31,6 +31,8 @@ import argparse
 import sys
 import math
 from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 from typing import Optional
 
 import numpy as np
@@ -97,6 +99,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     infile = Path(args.infile)
+    if not infile.is_absolute():
+        infile = _REPO_ROOT / infile
     if not infile.exists():
         print(f"ERROR: input file not found: {infile}", file=sys.stderr)
         return 2
@@ -160,6 +164,8 @@ def main() -> int:
         outpath = infile.with_name(infile.stem.replace("_clean", "") + "_anomaly.csv")
     else:
         outpath = Path(args.out)
+        if not outpath.is_absolute():
+            outpath = _REPO_ROOT / outpath
 
     try:
         df.to_csv(outpath, index=False)
@@ -190,6 +196,8 @@ def main() -> int:
                 plot_out = outpath.with_suffix("").with_name(outpath.stem + "_plot.png")
             else:
                 plot_out = Path(args.plot_out)
+                if not plot_out.is_absolute():
+                    plot_out = _REPO_ROOT / plot_out
             plot_out.parent.mkdir(parents=True, exist_ok=True)
             plt.savefig(plot_out, dpi=160)
             plt.close()

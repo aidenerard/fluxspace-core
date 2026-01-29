@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -199,8 +201,9 @@ def idw_grid(
 # -----------------------------
 def main() -> int:
     args = parse_args()
-
     infile = Path(args.infile)
+    if not infile.is_absolute():
+        infile = _REPO_ROOT / infile
     if not infile.exists():
         print(f"ERROR: input file not found: {infile}", file=sys.stderr)
         return 2

@@ -36,11 +36,14 @@ import time
 import math
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 import argparse
 import threading
 import queue
 
 import qwiic_mmc5983ma
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 EXPECTED_HEADER = [
@@ -166,6 +169,8 @@ def beep():
 
 def main() -> int:
     args = parse_args()
+    if not os.path.isabs(args.out):
+        args.out = str(_REPO_ROOT / args.out)
 
     if args.hz <= 0:
         print("ERROR: --hz must be > 0", file=sys.stderr)

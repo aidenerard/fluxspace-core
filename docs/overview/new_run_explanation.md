@@ -16,7 +16,7 @@ This bash script organizes completed pipeline runs by creating a timestamped fol
 
 **Typical usage:**
 ```bash
-./tools/new_run.sh
+./tools/2d/new_run.sh
 ```
 
 **Expected output:**
@@ -103,7 +103,7 @@ Use this script:
 1. Run the full pipeline: `mag_to_csv.py` → `validate_and_diagnosticsV1.py` → `compute_local_anomaly_v2.py` → heatmap visualization
    - **B_total heatmap:** `interpolate_to_Btotal_heatmap.py` (field strength visualization)
    - **Anomaly heatmap:** `interpolate_to_heatmapV1.py` (anomaly detection visualization)
-2. Run `./tools/new_run.sh` to archive all outputs
+2. Run `./tools/2d/new_run.sh` to archive all outputs
 3. Start a new measurement session (files in `data/raw/`, etc. can be overwritten)
 
 ---
@@ -115,22 +115,22 @@ This script is referenced in the Raspberry Pi setup runbook (Part E5) as the fin
 **Complete pipeline workflow:**
 ```bash
 # Step 1: Collect data
-python3 scripts/mag_to_csv.py
+python3 pipelines/2d/mag_to_csv.py
 
 # Step 2: Validate and clean
-python3 scripts/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
+python3 pipelines/2d/validate_and_diagnosticsV1.py --in data/raw/mag_data.csv
 
 # Step 3: Compute anomalies
-python3 scripts/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.10 --plot
+python3 pipelines/2d/compute_local_anomaly_v2.py --in data/processed/mag_data_clean.csv --radius 0.10 --plot
 
 # Step 4a: Create B_total heatmap (field strength)
-python3 scripts/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT --grid-step 0.01
+python3 pipelines/2d/interpolate_to_Btotal_heatmap.py --in data/processed/mag_data_clean.csv --units uT --grid-step 0.01
 
 # Step 4b: Create anomaly heatmap (anomaly detection)
-python3 scripts/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly --grid-step 0.01
+python3 pipelines/2d/interpolate_to_heatmapV1.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly --grid-step 0.01
 
 # Step 5: Organize run data
-./tools/new_run.sh
+./tools/2d/new_run.sh
 ```
 
 ---
@@ -168,26 +168,26 @@ This structure allows you to:
 - The script copies files (doesn't move them), so original files remain in `data/raw/`, etc.
 - If a source directory is empty, the copy command will fail silently (due to `|| true`)
 - The timestamp uses Eastern Time - adjust `TZ` in the script if you need a different timezone
-- Make sure the script is executable: `chmod +x tools/new_run.sh`
+- Make sure the script is executable: `chmod +x tools/2d/new_run.sh`
 
 ---
 
 ## Alternative: 3D scan storage (data/scans/*__3d)
 
-The **2D pipeline** and `./tools/new_run.sh` are unchanged. For the **3D pipeline** (Polycam/RTAB-Map + magnetometer fusion), a separate script creates scan snapshots under `data/scans/` so 3D runs stay visually distinct:
+The **2D pipeline** and `./tools/2d/new_run.sh` are unchanged. For the **3D pipeline** (Polycam/RTAB-Map + magnetometer fusion), a separate script creates scan snapshots under `data/scans/` so 3D runs stay visually distinct:
 
-- **Script:** `./scripts/new_3d_scan.sh` (does not call or modify `tools/new_run.sh`)
+- **Script:** `./tools/3d/new_3d_scan.sh` (does not call or modify `tools/2d/new_run.sh`)
 - **Folder:** `data/scans/<RUN_ID>__3d/` or `data/scans/<RUN_ID>__3d__<label>/`
 - **RUN_ID:** Same format: `MM-DD-YYYY_HH-MM` (America/New_York)
 
 **Create a 3D scan snapshot:**
 
 ```bash
-./scripts/new_3d_scan.sh
-./scripts/new_3d_scan.sh --label block01
+./tools/3d/new_3d_scan.sh
+./tools/3d/new_3d_scan.sh --label block01
 ```
 
 **Examples:** `data/scans/01-29-2026_13-57__3d/`, `data/scans/01-29-2026_13-57__3d__block01/`
 
-**Back up 3D scans to USB:** Use `./scripts/backup_usb_3d.sh` (backs up only `data/scans/` to a separate USB folder). The 2D runs backup (`./tools/backup_runs_to_usb.sh`) is unchanged.
+**Back up 3D scans to USB:** Use `./tools/3d/backup_usb_3d.sh` (backs up only `data/scans/` to a separate USB folder). The 2D runs backup (`./tools/2d/backup_runs_to_usb.sh`) is unchanged.
 
