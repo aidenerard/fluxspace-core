@@ -12,6 +12,20 @@ End-to-end guide to produce: **(1)** 3D geometry (mesh/point cloud), **(2)** tim
 
 ---
 
+## Pi setup for 3D (magnetometer + optional viz)
+
+If you run the **magnetometer logger** (or full pipeline) on a Raspberry Pi, install dependencies with the 3D setup script (same venv as 2D, plus PyVista for visualization):
+
+```bash
+cd ~/fluxspace-core
+chmod +x tools/3d/setup_pi.sh
+./tools/3d/setup_pi.sh
+```
+
+**What it installs:** System packages (I2C, python3-venv, pip), enables I2C, creates/reuses `~/fluxenv`, and installs Python deps: numpy, pandas, matplotlib, sparkfun-qwiic-mmc5983ma, **pyvista**. Reboot after first run if I2C was just enabled. See [raspberry_pi_setup.md](../raspberry_pi_setup.md) for full Pi setup and 3D usage.
+
+---
+
 ## Quickstart (minimal first run)
 
 ```bash

@@ -68,7 +68,16 @@ chmod +x tools/2d/setup_pi.sh
 - Installs system packages (git, python3-venv, python3-pip, i2c-tools, python3-smbus)
 - Enables I2C non-interactively
 - Creates Python virtual environment at `~/fluxenv`
-- Installs all Python dependencies (numpy, pandas, matplotlib, sparkfun-qwiic, sparkfun-qwiic-mmc5983ma)
+- Installs all Python dependencies for the **2D pipeline** (numpy, pandas, matplotlib, sparkfun-qwiic, sparkfun-qwiic-mmc5983ma)
+
+**For the 3D pipeline** (magnetometer logger on Pi + optional PyVista for visualization), use the 3D setup script after the 2D one (or instead, if you only need 3D):
+
+```bash
+chmod +x tools/3d/setup_pi.sh
+./tools/3d/setup_pi.sh
+```
+
+It uses the same `~/fluxenv` and adds **pyvista**. See [PIPELINE_3D.md](3d/PIPELINE_3D.md) for the 3D runbook.
 
 ### 2.2. Reboot (Required After First-Time I2C Enable)
 
@@ -725,7 +734,7 @@ Wait ~20 seconds, then unplug power.
 **One-time setup:**
 1. SSH into Pi
 2. Clone repo
-3. Run `./tools/2d/setup_pi.sh`
+3. Run `./tools/2d/setup_pi.sh` (2D pipeline), or `./tools/3d/setup_pi.sh` (3D pipeline: same venv + pyvista)
 4. Reboot
 5. Verify with `i2cdetect` and Python import
 
