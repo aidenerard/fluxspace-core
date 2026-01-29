@@ -26,7 +26,9 @@ logs/
 
 # =========================
 # Fluxspace generated data (DON'T COMMIT)
-# - ignore all data outputs
+# - ignore all data outputs (runs + scans)
+# - data/runs/ = 2D pipeline run snapshots
+# - data/scans/ = 3D scan snapshots (*__3d)
 # - keep folder structure via .gitkeep
 # =========================
 data/**

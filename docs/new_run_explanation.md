@@ -170,3 +170,24 @@ This structure allows you to:
 - The timestamp uses Eastern Time - adjust `TZ` in the script if you need a different timezone
 - Make sure the script is executable: `chmod +x tools/new_run.sh`
 
+---
+
+## Alternative: 3D scan storage (data/scans/*__3d)
+
+The **2D pipeline** and `./tools/new_run.sh` are unchanged. For the **3D pipeline** (Polycam/RTAB-Map + magnetometer fusion), a separate script creates scan snapshots under `data/scans/` so 3D runs stay visually distinct:
+
+- **Script:** `./scripts/new_3d_scan.sh` (does not call or modify `tools/new_run.sh`)
+- **Folder:** `data/scans/<RUN_ID>__3d/` or `data/scans/<RUN_ID>__3d__<label>/`
+- **RUN_ID:** Same format: `MM-DD-YYYY_HH-MM` (America/New_York)
+
+**Create a 3D scan snapshot:**
+
+```bash
+./scripts/new_3d_scan.sh
+./scripts/new_3d_scan.sh --label block01
+```
+
+**Examples:** `data/scans/01-29-2026_13-57__3d/`, `data/scans/01-29-2026_13-57__3d__block01/`
+
+**Back up 3D scans to USB:** Use `./scripts/backup_usb_3d.sh` (backs up only `data/scans/` to a separate USB folder). The 2D runs backup (`./tools/backup_runs_to_usb.sh`) is unchanged.
+

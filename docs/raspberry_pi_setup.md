@@ -463,6 +463,42 @@ Stop the process (close terminals/files using the USB, or kill the process), the
 
 **Note:** If the USB stick itself is flaky or already has filesystem corruption, you may occasionally need `fsck.vfat` to repair it. But following this unmount procedure every time will prevent corruption from happening during normal use.
 
+### 5.8. Alternative storage: 3D scans (data/scans/*__3d)
+
+The **2D pipeline is unchanged** and still uses `data/runs/` and the existing scripts (`./tools/new_run.sh`, `./tools/backup_runs_to_usb.sh`).
+
+For the **3D pipeline** (Polycam/RTAB-Map + magnetometer fusion), you can use a separate storage path so 3D scan snapshots stay distinct:
+
+- **Location:** `data/scans/<RUN_ID>__3d/` or `data/scans/<RUN_ID>__3d__<label>/`
+- **RUN_ID:** Same format as 2D: `MM-DD-YYYY_HH-MM` (America/New_York).
+
+**Create a 3D scan snapshot** (after capture/processing, snapshot current `data/raw`, `data/processed`, `data/exports` into a new scan folder):
+
+```bash
+cd ~/fluxspace-core
+./scripts/new_3d_scan.sh
+```
+
+With an optional label (e.g. block name):
+
+```bash
+./scripts/new_3d_scan.sh --label block01
+```
+
+**Examples:**
+- `data/scans/01-29-2026_13-57__3d/`
+- `data/scans/01-29-2026_13-57__3d__block01/`
+
+Each scan folder contains `raw/`, `processed/`, `exports/`, and `config/` (for extrinsics.json, etc.).
+
+**Back up 3D scans to USB** (separate from 2D runs backup):
+
+```bash
+./scripts/backup_usb_3d.sh
+```
+
+This backs up only `data/scans/` to `/media/fluxspace/FLUXSPACE/fluxspace_scans_backup/`. Mount/unmount USB the same way as for 2D (see 5.6.1 and 5.7). The 2D runs backup script is not modified; use `./tools/backup_runs_to_usb.sh` for 2D runs as before.
+
 ---
 
 ## Part 6 — Quick "It Worked" Checklist
