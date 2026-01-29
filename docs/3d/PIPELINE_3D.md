@@ -389,6 +389,27 @@ All scripts use **argparse**, **clear prints** of inputs/outputs, and write into
 
 ---
 
+## Script explanations
+
+Detailed docs for each 3D pipeline script:
+
+| Script | Explanation |
+|--------|-------------|
+| `polycam_raw_to_trajectory` | [polycam_raw_to_trajectory_explanation.md](polycam_raw_to_trajectory_explanation.md) |
+| `rtabmap_poses_to_trajectory` | [rtabmap_poses_to_trajectory_explanation.md](rtabmap_poses_to_trajectory_explanation.md) |
+| `fuse_mag_with_trajectory` | [fuse_mag_with_trajectory_explanation.md](fuse_mag_with_trajectory_explanation.md) |
+| `mag_world_to_voxel_volume` | [mag_world_to_voxel_volume_explanation.md](mag_world_to_voxel_volume_explanation.md) |
+| `visualize_3d_heatmap` | [visualize_3d_heatmap_explanation.md](visualize_3d_heatmap_explanation.md) |
+| `mag_calibrate_zero_logger` | [mag_calibrate_zero_logger_explanation.md](mag_calibrate_zero_logger_explanation.md) |
+| `mag_to_csv_v2` (2D, used for 3D capture) | [mag_to_csv_v2_explanation.md](mag_to_csv_v2_explanation.md) |
+| **GPR (optional)** | |
+| `mag_world_to_voxel_volumeV2_gpr` | [mag_world_to_voxel_volumeV2_gpr_explanation.md](mag_world_to_voxel_volumeV2_gpr_explanation.md) |
+| `visualize_3d_heatmapV2_gpr` | [visualize_3d_heatmapV2_gpr_explanation.md](visualize_3d_heatmapV2_gpr_explanation.md) |
+
+See also: [new_3d_scan_explanation.md](new_3d_scan_explanation.md), [backup_scans_to_usb_explanation.md](backup_scans_to_usb_explanation.md), [backup_usb_3d_explanation.md](backup_usb_3d_explanation.md).
+
+---
+
 ## Legacy commands
 
 - **Python:** Wrappers under **`scripts/2d/`** and **`scripts/3d/`** still work; preferred usage is **`python3 pipelines/2d/<script>.py`** and **`python3 pipelines/3d/<script>.py`**.

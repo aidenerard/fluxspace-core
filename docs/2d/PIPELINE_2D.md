@@ -57,8 +57,24 @@ Expected: `data/raw/mag_data.csv` → `data/processed/mag_data_clean.csv` → `d
 
 - **Calibration (offline):** `python3 pipelines/2d/calibrate_magnetometerV1.py --in data/raw/mag_cal.csv --method ellipsoid --earth-field-ut 52`
 - **Backup runs to USB:** `./tools/2d/backup_runs_to_usb.sh` (see main runbook for mount/unmount)
+- **GPR heatmap (optional):** `python3 pipelines/2d/interpolate_to_heatmapV3_gpr.py --in data/processed/mag_data_anomaly.csv --value-col local_anomaly` → mean, gradient, and uncertainty maps. Requires `scikit-learn`. See [interpolate_to_heatmapV3_gpr_explanation.md](interpolate_to_heatmapV3_gpr_explanation.md).
 
 For full setup and 3D pipeline, see [raspberry_pi_setup.md](../raspberry_pi_setup.md) and [PIPELINE_3D.md](../3d/PIPELINE_3D.md).
+
+---
+
+## Script and tool explanations
+
+**Pipeline scripts:** [mag_to_csv_explanation.md](mag_to_csv_explanation.md), [validate_and_diagnostics_explanation.md](validate_and_diagnostics_explanation.md), [compute_local_anomaly_v2_explanation.md](compute_local_anomaly_v2_explanation.md), [interpolate_to_Btotal_heatmap_explanation.md](interpolate_to_Btotal_heatmap_explanation.md), [interpolate_to_heatmap_explanation.md](interpolate_to_heatmap_explanation.md), [calibrate_magnetometer_explanation.md](calibrate_magnetometer_explanation.md). **GPR (optional):** [interpolate_to_heatmapV3_gpr_explanation.md](interpolate_to_heatmapV3_gpr_explanation.md).
+
+**2D tools:**
+
+| Tool | Description |
+|------|-------------|
+| [new_run_explanation.md](new_run_explanation.md) | `./tools/2d/new_run.sh` — snapshot run to `data/runs/<timestamp>/` |
+| [backup_runs_to_usb_explanation.md](backup_runs_to_usb_explanation.md) | `./tools/2d/backup_runs_to_usb.sh` — back up `data/runs/` to USB |
+| [setup_pi_explanation.md](setup_pi_explanation.md) | `./tools/2d/setup_pi.sh` — Pi system + Python setup for 2D |
+| [mmc5983ma_smoketest_explanation.md](mmc5983ma_smoketest_explanation.md) | `python3 tools/2d/mmc5983ma_smoketest.py` — I2C smoketest for MMC5983MA |
 
 ---
 
