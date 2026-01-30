@@ -57,12 +57,12 @@ python3 pipelines/3d/mag_world_to_voxel_volume.py \
   --margin 0.1
 
 python3 pipelines/3d/visualize_3d_heatmap.py \
-  --volume "$RUN_DIR/exports/volume.npz" \
+  --in "$RUN_DIR/exports/volume.npz" \
   --out-dir "$RUN_DIR/exports" \
   --screenshot
 ```
 
-Expected outputs: `trajectory.csv`, `mag_world.csv`, `volume.npz`, and `exports/heatmap_3d_screenshot.png`.
+(Use `--volume` as an alias for `--in` if you prefer.) Expected outputs: `trajectory.csv`, `mag_world.csv`, `volume.npz`, and `exports/heatmap_3d_screenshot.png`.
 
 ---
 
@@ -263,6 +263,8 @@ Expected output: `mag_world.csv` with columns `t_rel_s, x, y, z, value, value_ty
 
 ### Step 3: Voxel volume
 
+**Option A — IDW (original):**
+
 ```bash
 python3 pipelines/3d/mag_world_to_voxel_volume.py \
   --in "$RUN_DIR/processed/mag_world.csv" \
@@ -272,20 +274,28 @@ python3 pipelines/3d/mag_world_to_voxel_volume.py \
   --method idw
 ```
 
-- Bounds are computed from data + margin.
-- Interpolation: IDW (k-nearest) or `griddata`; `idw` is default and robust for ~50k points.
+**Option B — IDW or GPR + gradient (single volume.npz):**
+
+```bash
+python3 pipelines/3d/mag_world_to_voxel_volumeV2_gpr.py \
+  --in "$RUN_DIR/processed/mag_world.csv" \
+  --out "$RUN_DIR/exports/volume.npz" \
+  --method idw
+# or --method gpr  (slower; adds std uncertainty)
+```
+
+- Bounds from data + margin/pad. IDW is fast; GPR is O(N³), use `--max-points` if needed. Both write `volume` and `grad`; GPR also writes `std`.
 
 ### Step 4: 3D visualization
 
 ```bash
 python3 pipelines/3d/visualize_3d_heatmap.py \
-  --volume "$RUN_DIR/exports/volume.npz" \
+  --in "$RUN_DIR/exports/volume.npz" \
   --out-dir "$RUN_DIR/exports" \
   --screenshot
 ```
 
-- Optional: `--mesh path/to/mesh.ply` to overlay geometry.
-- Produces orthogonal slice planes, isosurface threshold (basic slider in GUI), volume rendering; saves `heatmap_3d_screenshot.png` under `--out-dir`. Optional HTML export if supported.
+- Use `--volume` as alias for `--in` if you prefer. `--mode value | std | grad` to view main volume, uncertainty, or gradient. Headless: add `--no-show`. Slices: `--show-slices --save --no-show` to write slice PNGs to `--out-dir`.
 
 ---
 
@@ -348,15 +358,16 @@ python3 pipelines/3d/visualize_3d_heatmap.py \
 
 ## Dependencies (Python 3.10+)
 
-- **Required:** `numpy`, `pandas`, `scipy` (interpolation), `pyvista` (3D viz).
+- **Required:** `numpy`, `pandas`, `matplotlib`, `scipy` (interpolation), `scikit-learn` (GPR), `pyvista` (3D viz / screenshot).
 - **Optional:** `open3d` (PLY/OBJ loading for overlay).
 
-Install example:
+**Mac / Linux:**
 
 ```bash
-pip install numpy pandas scipy pyvista
-pip install open3d   # optional, for mesh loading
+pip install -U numpy pandas matplotlib scipy scikit-learn pyvista
 ```
+
+**Pi:** Run `./tools/3d/setup_pi.sh` (installs the above plus I2C/sensor libs). See [raspberry_pi_setup.md](../raspberry_pi_setup.md).
 
 If a script needs a missing dependency, it will print a clear error and the package name.
 
@@ -373,6 +384,11 @@ If a script needs a missing dependency, it will print a clear error and the pack
 | **Polycam: “No cameras found”** | Confirm export folder contains `cameras.json` or `corrected_cameras`; check script for supported keys. |
 | **RTAB-Map: wrong columns** | Use `--format TUM` or KITTI; ensure file has timestamp + 7 numeric fields per line. |
 | **PyVista / viz errors** | Install `pyvista`; on headless server run with `--screenshot` only (no GUI). |
+| **Permission denied (shell scripts)** | `chmod +x tools/2d/*.sh tools/3d/*.sh` (or the specific script). |
+| **scipy missing** | `pip install scipy` (required for IDW and griddata). |
+| **scikit-learn missing** | `pip install scikit-learn` (required for GPR method). |
+| **pyvista add_volume / scalar_range error** | Fixed in this repo: script uses `clim` (not `scalar_range`). Update the script or re-pull. |
+| **Headless / no GUI** | Use `--screenshot --no-show` for 3D screenshot only; use `--show-slices --save --no-show` for slice PNGs. |
 
 ---
 

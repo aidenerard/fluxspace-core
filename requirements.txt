@@ -1,0 +1,13 @@
+# Core 2D/3D pipeline dependencies (Mac or Pi)
+numpy
+pandas
+matplotlib
+scipy
+scikit-learn
+
+# 3D visualization (optional; required for --screenshot)
+pyvista
+
+# 2D magnetometer capture (Pi)
+# sparkfun-qwiic
+# sparkfun-qwiic-mmc5983ma

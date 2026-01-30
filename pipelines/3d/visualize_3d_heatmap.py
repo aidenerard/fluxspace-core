@@ -1,66 +1,61 @@
 #!/usr/bin/env python3
 """
-visualize_3d_heatmapV2_gpr.py
+visualize_3d_heatmap.py
 
-Viewer for voxel volumes saved by:
-  - mag_world_to_voxel_volume.py (IDW) -> volume.npz
-  - mag_world_to_voxel_volumeV2_gpr.py (GPR) -> *_gpr_mean.npz, *_gpr_std.npz, *_gpr_grad.npz
+Viewer for voxel volume (volume.npz) from mag_world_to_voxel_volume or mag_world_to_voxel_volumeV2_gpr.
 
-Displays:
-  - Thresholded 3D scatter of voxels above a percentile/abs threshold
-  - Optional orthogonal slice plots (XY/XZ/YZ)
-  - Optional side-by-side slice comparison (mean vs grad)
+- PyVista (optional): volume rendering, --screenshot to save PNG. Use clim for color range (no scalar_range).
+- Matplotlib: 3D scatter + orthogonal slices; --show-slices --save --no-show for headless slice PNGs.
 
-Supports modes:
-  --mode mean | std | grad | value
-    - mean/std/grad will auto-locate sibling npz files if your input is one of them.
-    - value is identical to mean for non-GPR volumes (just uses the 'volume' inside the file)
-
-Notes:
-  - This script uses Matplotlib (no PyVista/VTK), so it avoids PyVista API issues.
+CLI: --in or --volume (alias). --mode value | mean | std | grad. If pyvista missing, only scatter/slices.
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Any
 
 import numpy as np
 import matplotlib.pyplot as plt
 
+try:
+    import pyvista as pv
+    HAS_PYVISTA = True
+except ImportError as e:
+    HAS_PYVISTA = False
+    _PYVISTA_ERROR = e
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Visualize voxel volume (.npz) as thresholded point cloud + slices (GPR-aware).",
+        description="Visualize voxel volume (.npz): scatter, slices, optional PyVista volume + screenshot.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--in", dest="in_npz", required=True, help="Input .npz (e.g. volume.npz or *_gpr_mean.npz).")
-
+    p.add_argument("--in", dest="in_npz", default=None, help="Input .npz (e.g. volume.npz).")
+    p.add_argument("--volume", dest="volume_npz", default=None, help="Alias for --in (backward compatible).")
     p.add_argument(
         "--mode",
         choices=["value", "mean", "std", "grad"],
         default="value",
-        help="Which field to visualize. For GPR, mean/std/grad can auto-find sibling files.",
+        help="Field to visualize: value (main volume), mean (=value), std/grad if present in npz.",
     )
-
-    p.add_argument("--percentile", type=float, default=99.0, help="Show voxels >= this percentile of selected field.")
+    p.add_argument("--percentile", type=float, default=99.0, help="Show voxels >= this percentile.")
     p.add_argument("--abs-thresh", type=float, default=None, help="Absolute threshold (overrides percentile).")
-    p.add_argument("--max-points", type=int, default=300000, help="Cap points plotted (random subsample).")
+    p.add_argument("--max-points", type=int, default=300000, help="Cap points in scatter (subsample).")
     p.add_argument("--seed", type=int, default=7, help="Seed for subsampling.")
 
-    p.add_argument("--show-slices", action="store_true", help="Show XY/XZ/YZ slices in separate figures.")
-    p.add_argument("--compare-mean-vs-grad", action="store_true",
-                   help="Also show a mean-vs-grad slice comparison (if available / computable).")
+    p.add_argument("--show-slices", action="store_true", help="Show XY/XZ/YZ slices (Matplotlib).")
+    p.add_argument("--compare-mean-vs-grad", action="store_true", help="Also show mean-vs-grad slice comparison.")
+    p.add_argument("--slice-z", type=int, default=None, help="Z index for XY slice.")
+    p.add_argument("--slice-y", type=int, default=None, help="Y index for XZ slice.")
+    p.add_argument("--slice-x", type=int, default=None, help="X index for YZ slice.")
 
-    p.add_argument("--slice-z", type=int, default=None, help="Z index for XY slice (default: middle).")
-    p.add_argument("--slice-y", type=int, default=None, help="Y index for XZ slice (default: middle).")
-    p.add_argument("--slice-x", type=int, default=None, help="X index for YZ slice (default: middle).")
-
-    p.add_argument("--save", action="store_true", help="Save PNGs to --out-dir instead of only showing.")
-    p.add_argument("--out-dir", default=None, help="Output directory for saved images (default: input file folder).")
-    p.add_argument("--no-show", action="store_true", help="Do not pop up interactive windows (use with --save).")
-
+    p.add_argument("--save", action="store_true", help="Save slice/screenshot PNGs to --out-dir.")
+    p.add_argument("--out-dir", default=None, help="Output directory for PNGs (default: input file folder).")
+    p.add_argument("--no-show", action="store_true", help="Do not open interactive windows (use with --save/--screenshot).")
+    p.add_argument("--screenshot", action="store_true", help="Save 3D volume screenshot (requires pyvista).")
     return p.parse_args()
 
 
@@ -76,13 +71,14 @@ def load_npz(path: Path) -> Tuple[np.ndarray, np.ndarray, float, np.ndarray]:
     if "volume" not in data:
         raise ValueError(f"{path.name} missing key 'volume'. Keys: {list(data.keys())}")
     vol = data["volume"].astype(np.float32)
-
-    # Some scripts store volume as (z,y,x); others might store (x,y,z).
-    # Your existing V2 viewer assumed (z,y,x), so we keep that convention:
-    # (nz, ny, nx)
     if vol.ndim != 3:
         raise ValueError(f"{path.name} volume must be 3D, got shape {vol.shape}")
 
+    # Normalize to (nz, ny, nx): mag_world_to_voxel_volume uses (nx, ny, nz) + axes_x/y/z; V2_gpr uses (nz, ny, nx) + dims.
+    if "axes_x" in data or "nx" in data:
+        nx = int(np.array(data.get("nx", vol.shape[0])).reshape(-1)[0])
+        if vol.shape[0] == nx:
+            vol = np.transpose(vol, (2, 1, 0)).copy()
     origin, voxel, dims = _npz_meta(data, vol)
     return vol, origin, voxel, dims
 
@@ -108,25 +104,36 @@ def compute_grad_mag(vol_zyx: np.ndarray, spacing: float) -> np.ndarray:
 
 def pick_field(in_path: Path, mode: str) -> Tuple[np.ndarray, str, float, np.ndarray, float]:
     """
-    Returns (field_volume_zyx, label, voxel, origin, spacing)
+    Returns (field_volume_zyx, label, voxel, origin, spacing).
+    Uses 'volume' for value/mean; 'std'/'grad' from same npz if present, else sibling files or compute grad.
     """
-    vol, origin, voxel, dims = load_npz(in_path)
-
+    data = np.load(in_path, allow_pickle=True)
+    if "volume" not in data:
+        raise ValueError(f"{in_path.name} missing key 'volume'. Keys: {list(data.keys())}")
+    vol = data["volume"].astype(np.float32)
+    origin, voxel, dims = _npz_meta(data, vol)
     label = mode
     field = vol
 
     if mode in ("mean", "std", "grad"):
-        sib = sibling_npz(in_path, mode)
-        if sib is not None:
-            field, origin, voxel, dims = load_npz(sib)
-            label = mode
+        if mode == "mean":
+            field = vol
+            label = "value"
+        elif mode == "std" and "std" in data:
+            field = data["std"].astype(np.float32)
+            label = "std"
+        elif mode == "grad" and "grad" in data:
+            field = data["grad"].astype(np.float32)
+            label = "grad"
         else:
-            # If asked for grad but no file, compute from current volume (assume it is mean)
-            if mode == "grad":
+            sib = sibling_npz(in_path, mode)
+            if sib is not None:
+                field, origin, voxel, dims = load_npz(sib)
+                label = mode
+            elif mode == "grad":
                 field = compute_grad_mag(vol, voxel)
                 label = "grad(computed)"
             else:
-                # mean/std requested but sibling missing: fall back to current
                 label = f"{mode}(missing->using_input)"
                 field = vol
 
@@ -164,14 +171,42 @@ def save_or_show(fig, out_path: Optional[Path], no_show: bool):
         plt.close(fig)
 
 
+def _get_in_path(args: argparse.Namespace) -> Path:
+    in_path = args.in_npz or args.volume_npz
+    if not in_path:
+        print("ERROR: Provide --in or --volume with path to volume.npz.", file=sys.stderr)
+        print("  Example: --in \"$RUN_DIR/exports/volume.npz\"", file=sys.stderr)
+        sys.exit(2)
+    return Path(in_path).expanduser().resolve()
+
+
+def _build_pyvista_grid(vol_zyx: np.ndarray, origin: np.ndarray, voxel: float) -> Any:
+    """Build PyVista ImageData from volume (nz, ny, nx). PyVista expects (nx, ny, nz) point data."""
+    if not HAS_PYVISTA:
+        raise RuntimeError(
+            "PyVista is required for --screenshot / volume rendering.\n"
+            f"Import error: {_PYVISTA_ERROR}\n\n"
+            "Install with: pip install pyvista"
+        )
+    nz, ny, nx = vol_zyx.shape
+    grid = pv.ImageData()
+    grid.dimensions = (nx, ny, nz)
+    grid.origin = (float(origin[0]), float(origin[1]), float(origin[2]))
+    grid.spacing = (voxel, voxel, voxel)
+    vals = np.transpose(vol_zyx, (2, 1, 0)).astype(np.float32).copy()
+    grid.point_data["value"] = vals.ravel(order="F")
+    return grid
+
+
 def main() -> None:
     args = parse_args()
-    in_path = Path(args.in_npz).expanduser().resolve()
+    in_path = _get_in_path(args)
     if not in_path.exists():
-        raise FileNotFoundError(in_path)
+        print(f"ERROR: File not found: {in_path}", file=sys.stderr)
+        sys.exit(2)
 
     out_dir = Path(args.out_dir).expanduser().resolve() if args.out_dir else in_path.parent
-    if args.save:
+    if args.save or args.screenshot:
         out_dir.mkdir(parents=True, exist_ok=True)
 
     field, label, voxel, origin, spacing = pick_field(in_path, args.mode)
@@ -254,6 +289,34 @@ def main() -> None:
             plt.tight_layout()
             outp = out_dir / f"viz3d_compare_mean_vs_grad_XY_z{z_i}.png" if args.save else None
             save_or_show(f, outp, args.no_show)
+
+    # PyVista screenshot (volume rendering)
+    if args.screenshot:
+        try:
+            grid = _build_pyvista_grid(field, origin, voxel)
+            vmin = float(np.nanmin(field))
+            vmax = float(np.nanmax(field))
+            if vmax <= vmin:
+                vmax = vmin + 1.0
+            if HAS_PYVISTA:
+                off_screen = args.no_show
+                if off_screen:
+                    pv.OFF_SCREEN = True
+                pl = pv.Plotter(off_screen=off_screen)
+                pl.add_volume(grid, scalars="value", clim=(vmin, vmax), opacity="linear", cmap="coolwarm")
+                pl.camera_position = "yz"
+                pl.reset_camera()
+                shot_path = out_dir / "heatmap_3d_screenshot.png"
+                pl.screenshot(str(shot_path))
+                pl.close()
+                print(f"Wrote: {shot_path}")
+            else:
+                raise RuntimeError("PyVista is required for --screenshot. Install: pip install pyvista")
+        except Exception as e:
+            print(f"ERROR: Screenshot failed: {e}", file=sys.stderr)
+            if not HAS_PYVISTA:
+                print("Install PyVista: pip install pyvista", file=sys.stderr)
+            sys.exit(1)
 
 
 if __name__ == "__main__":

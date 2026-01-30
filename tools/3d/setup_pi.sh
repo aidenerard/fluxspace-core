@@ -31,7 +31,7 @@ python -m pip install -U pip wheel setuptools
 
 # ---- 4) Python deps (2D + 3D pipeline + sensor) ----
 echo "[4/4] Installing Python packages (2D + 3D + magnetometer)..."
-pip install -U numpy pandas matplotlib scipy
+pip install -U numpy pandas matplotlib scipy scikit-learn
 pip install -U sparkfun-qwiic sparkfun-qwiic-mmc5983ma
 # 3D: voxel heatmap visualization (optional on Pi; often run on Mac)
 pip install -U pyvista

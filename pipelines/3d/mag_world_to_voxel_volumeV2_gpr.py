@@ -2,32 +2,35 @@
 """
 mag_world_to_voxel_volumeV2_gpr.py
 
-3D voxel volume generation using Gaussian Process Regression (GPR).
+mag_world.csv -> volume.npz with optional method: idw (same as original) or gpr.
 
-This is the 3D analogue of the 2D GPR heatmap approach:
-  - Fit GPR to sparse (x,y,z)->value samples (default: local_anomaly).
-  - Evaluate on a voxel grid to produce a dense 3D field.
-  - Also outputs an uncertainty volume (std) and a gradient magnitude volume.
+- method idw: k-nearest IDW interpolation, then gradient magnitude (same deps as mag_world_to_voxel_volume).
+- method gpr: Gaussian Process Regression; outputs mean, std (uncertainty), and gradient magnitude.
 
-Outputs:
-  - <name>_gpr_mean.npz : contains volume (mean), origin, voxel_size, dims
-  - <name>_gpr_std.npz  : same metadata, volume = std
-  - <name>_gpr_grad.npz : same metadata, volume = |grad(mean)|
+Outputs (single volume.npz by default):
+  - volume: 3D array (nz, ny, nx)
+  - grad:   gradient magnitude (always)
+  - std:    uncertainty (GPR only)
+  - origin, voxel_size, dims
 
-Notes:
-  - GPR is O(N^3). Use --max-points to subsample if you have many samples.
-  - 3D grids get big fast. Start with voxel=0.02 or 0.03 to validate, then tighten.
+Optional: --out-dir + separate _gpr_mean/_gpr_std/_gpr_grad.npz when method=gpr (legacy).
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+try:
+    from scipy.spatial import cKDTree
+except ImportError:
+    cKDTree = None  # type: ignore
 
 try:
     from sklearn.gaussian_process import GaussianProcessRegressor
@@ -42,39 +45,41 @@ else:
 
 @dataclass
 class VoxelGrid:
-    origin: np.ndarray  # (3,)
-    dims: np.ndarray    # (3,) ints: nx, ny, nz
+    origin: np.ndarray  # (3,) x,y,z
+    dims: np.ndarray    # (nx, ny, nz)
     voxel: float
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Fit 3D GPR and rasterize to a voxel volume (mean/std/grad).",
+        description="mag_world.csv -> volume.npz (idw or gpr); always includes grad.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--in", dest="in_csv", required=True, help="Input CSV with x,y,z and value column.")
-    p.add_argument("--value-col", default="local_anomaly", help="Column to model.")
+    p.add_argument("--in", dest="in_csv", required=True, help="Path to mag_world.csv (or CSV with x,y,z,value).")
+    p.add_argument("--out", default="", help="Output volume.npz path. Default: <out-dir>/volume.npz or <input_dir>/../exports/volume.npz")
+    p.add_argument("--value-col", default="value", help="Value column (mag_world.csv uses 'value').")
     p.add_argument("--x-col", default="x", help="X column name.")
     p.add_argument("--y-col", default="y", help="Y column name.")
     p.add_argument("--z-col", default="z", help="Z column name.")
+    p.add_argument("--method", choices=["idw", "gpr"], default="idw", help="Interpolation: idw (fast) or gpr (smooth + uncertainty).")
 
-    p.add_argument("--out-dir", default=None, help="Output directory (default: same folder as input).")
-    p.add_argument("--name", default=None, help="Output prefix (default: input filename stem).")
+    p.add_argument("--out-dir", default=None, help="Output directory (default: same folder as input or ../exports).")
+    p.add_argument("--name", default=None, help="Output prefix for legacy _gpr_*.npz (method=gpr only).")
 
     p.add_argument("--voxel", type=float, default=0.02, help="Voxel size in meters.")
     p.add_argument("--pad", type=float, default=0.0, help="Padding around bounds (meters).")
-    p.add_argument("--max-points", type=int, default=2000, help="Max training points (subsample if larger).")
+    p.add_argument("--max-points", type=int, default=2000, help="Max training points for GPR (subsample if larger).")
+    p.add_argument("--k", type=int, default=8, help="Nearest neighbors for IDW.")
+    p.add_argument("--power", type=float, default=2.0, help="IDW power.")
 
-    # Kernel params
-    p.add_argument("--length-scale", type=float, default=0.05, help="RBF length-scale in meters.")
-    p.add_argument("--signal", type=float, default=1.0, help="Kernel signal variance multiplier.")
-    p.add_argument("--noise", type=float, default=0.001, help="White noise level added to kernel.")
-    p.add_argument("--alpha", type=float, default=1e-6, help="GPR alpha (numerical stability).")
-    p.add_argument("--no-optimize", action="store_true", help="Disable kernel hyperparameter optimization.")
+    # GPR kernel params
+    p.add_argument("--length-scale", type=float, default=0.05, help="RBF length-scale in meters (GPR).")
+    p.add_argument("--signal", type=float, default=1.0, help="Kernel signal variance (GPR).")
+    p.add_argument("--noise", type=float, default=0.001, help="White noise level (GPR).")
+    p.add_argument("--alpha", type=float, default=1e-6, help="GPR alpha.")
+    p.add_argument("--no-optimize", action="store_true", help="Disable GPR kernel optimization.")
     p.add_argument("--seed", type=int, default=7, help="Random seed for subsampling.")
-
-    # Compute controls
-    p.add_argument("--chunk", type=int, default=200000, help="Prediction chunk size (points per batch).")
+    p.add_argument("--chunk", type=int, default=200000, help="Prediction chunk size (GPR).")
     return p.parse_args()
 
 
@@ -86,6 +91,28 @@ def _require_sklearn() -> None:
             "Install:\n"
             "  pip install scikit-learn\n"
         )
+
+
+def _require_scipy() -> None:
+    if cKDTree is None:
+        raise RuntimeError("IDW method requires scipy. Install with: pip install scipy")
+
+
+def idw_interpolate(
+    points: np.ndarray,
+    values: np.ndarray,
+    grid_xyz: np.ndarray,
+    k: int = 8,
+    power: float = 2.0,
+    eps: float = 1e-12,
+) -> np.ndarray:
+    """Interpolate at grid_xyz (N,3) using k-nearest IDW."""
+    tree = cKDTree(points)
+    dists, idx = tree.query(grid_xyz, k=min(k, len(points)), workers=-1)
+    dists = np.maximum(dists, eps)
+    w = 1.0 / (dists ** power)
+    w /= w.sum(axis=1, keepdims=True)
+    return (w * values[idx]).sum(axis=1)
 
 
 def load_points(csv_path: Path, x_col: str, y_col: str, z_col: str, v_col: str) -> Tuple[np.ndarray, np.ndarray]:
@@ -153,80 +180,89 @@ def gradient_magnitude(volume: np.ndarray, voxel: float) -> np.ndarray:
     return np.sqrt(dx**2 + dy**2 + dz**2)
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
-    _require_sklearn()
-
     in_path = Path(args.in_csv).expanduser().resolve()
     if not in_path.exists():
-        raise FileNotFoundError(in_path)
+        print(f"ERROR: File not found: {in_path}", file=sys.stderr)
+        return 2
 
     out_dir = Path(args.out_dir).expanduser().resolve() if args.out_dir else in_path.parent
+    if args.out:
+        out_volume = Path(args.out).expanduser().resolve()
+    else:
+        if in_path.parent.name == "processed" and (in_path.parent.parent / "exports").exists():
+            out_volume = in_path.parent.parent / "exports" / "volume.npz"
+        else:
+            out_volume = out_dir / "volume.npz"
+    out_dir = out_volume.parent
     out_dir.mkdir(parents=True, exist_ok=True)
     name = args.name if args.name else in_path.stem
 
     X, y = load_points(in_path, args.x_col, args.y_col, args.z_col, args.value_col)
-    X, y = subsample(X, y, args.max_points, args.seed)
-
-    # Normalize y for stability
-    y_mean = float(np.mean(y))
-    y_std = float(np.std(y)) if float(np.std(y)) > 0 else 1.0
-    y_n = (y - y_mean) / y_std
-
-    kernel = ConstantKernel(constant_value=args.signal, constant_value_bounds="fixed") * RBF(
-        length_scale=args.length_scale, length_scale_bounds="fixed" if args.no_optimize else (1e-4, 10.0)
-    ) + WhiteKernel(noise_level=args.noise, noise_level_bounds="fixed" if args.no_optimize else (1e-8, 1e-1))
-
-    gpr = GaussianProcessRegressor(
-        kernel=kernel,
-        alpha=args.alpha,
-        normalize_y=False,
-        optimizer=None if args.no_optimize else "fmin_l_bfgs_b",
-        random_state=args.seed,
-    )
-    gpr.fit(X, y_n)
-
     grid = build_grid(X, args.voxel, args.pad)
     nx, ny, nz = grid.dims.tolist()
+    origin = grid.origin
+    voxel = grid.voxel
 
-    # Store volume as (nz, ny, nx) so slicing by z is volume[z,:,:]
-    mean_vol_n = np.empty((nz, ny, nx), dtype=np.float32)
-    std_vol_n = np.empty((nz, ny, nx), dtype=np.float32)
+    if args.method == "idw":
+        _require_scipy()
+        ox, oy, oz = origin[0], origin[1], origin[2]
+        xi = np.linspace(ox, ox + (nx - 1) * voxel, nx)
+        yi = np.linspace(oy, oy + (ny - 1) * voxel, ny)
+        zi = np.linspace(oz, oz + (nz - 1) * voxel, nz)
+        gx, gy, gz = np.meshgrid(xi, yi, zi, indexing="ij")
+        grid_xyz = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()])
+        print(f"Building volume (IDW): {nx} x {ny} x {nz} = {grid_xyz.shape[0]} voxels from {len(X)} points...")
+        vol_flat = idw_interpolate(X, y, grid_xyz, k=args.k, power=args.power)
+        vol_nxynz = vol_flat.reshape((nx, ny, nz)).astype(np.float32)
+        # Store as (nz, ny, nx) for viewer
+        mean_vol = np.transpose(vol_nxynz, (2, 1, 0)).copy()
+        std_vol = np.full_like(mean_vol, np.nan, dtype=np.float32)
+    else:
+        _require_sklearn()
+        X, y = subsample(X, y, args.max_points, args.seed)
+        y_mean = float(np.mean(y))
+        y_std = float(np.std(y)) if float(np.std(y)) > 0 else 1.0
+        y_n = (y - y_mean) / y_std
+        kernel = ConstantKernel(constant_value=args.signal, constant_value_bounds="fixed") * RBF(
+            length_scale=args.length_scale, length_scale_bounds="fixed" if args.no_optimize else (1e-4, 10.0)
+        ) + WhiteKernel(noise_level=args.noise, noise_level_bounds="fixed" if args.no_optimize else (1e-8, 1e-1))
+        gpr = GaussianProcessRegressor(
+            kernel=kernel,
+            alpha=args.alpha,
+            normalize_y=False,
+            optimizer=None if args.no_optimize else "fmin_l_bfgs_b",
+            random_state=args.seed,
+        )
+        gpr.fit(X, y_n)
+        mean_vol_n = np.empty((nz, ny, nx), dtype=np.float32)
+        std_vol_n = np.empty((nz, ny, nx), dtype=np.float32)
+        for idx, pts in iter_grid_points(grid, args.chunk):
+            mean_chunk, std_chunk = gpr.predict(pts, return_std=True)
+            ix, iy, iz = linear_to_ijk(idx, grid)
+            mean_vol_n[iz, iy, ix] = mean_chunk.astype(np.float32)
+            std_vol_n[iz, iy, ix] = std_chunk.astype(np.float32)
+        mean_vol = (mean_vol_n * y_std + y_mean).astype(np.float32)
+        std_vol = (std_vol_n * y_std).astype(np.float32)
+        print(f"Building volume (GPR): {nx} x {ny} x {nz} from {len(X)} points...")
 
-    for idx, pts in iter_grid_points(grid, args.chunk):
-        mean_chunk, std_chunk = gpr.predict(pts, return_std=True)
-        ix, iy, iz = linear_to_ijk(idx, grid)
-        mean_vol_n[iz, iy, ix] = mean_chunk.astype(np.float32)
-        std_vol_n[iz, iy, ix] = std_chunk.astype(np.float32)
-
-    # Un-normalize
-    mean_vol = mean_vol_n * y_std + y_mean
-    std_vol = std_vol_n * y_std
-
-    grad_vol = gradient_magnitude(mean_vol.astype(np.float32), grid.voxel).astype(np.float32)
+    grad_vol = gradient_magnitude(mean_vol, voxel).astype(np.float32)
 
     meta = {
-        "origin": grid.origin.astype(np.float32),
-        "voxel_size": np.float32(grid.voxel),
+        "origin": origin.astype(np.float32),
+        "voxel_size": np.float32(voxel),
         "dims": grid.dims.astype(np.int32),
-        "axis_order": np.array(["z", "y", "x"]),  # volume shape order
-        "value_col": np.array([args.value_col]),
     }
+    save_dict = {"volume": mean_vol, "grad": grad_vol, **meta}
+    if args.method == "gpr":
+        save_dict["std"] = std_vol
+    np.savez_compressed(out_volume, **save_dict)
 
-    out_mean = out_dir / f"{name}_gpr_mean.npz"
-    out_std = out_dir / f"{name}_gpr_std.npz"
-    out_grad = out_dir / f"{name}_gpr_grad.npz"
-
-    np.savez_compressed(out_mean, volume=mean_vol.astype(np.float32), **meta)
-    np.savez_compressed(out_std, volume=std_vol.astype(np.float32), **meta)
-    np.savez_compressed(out_grad, volume=grad_vol.astype(np.float32), **meta)
-
-    print("Saved:")
-    print(f"  {out_mean}")
-    print(f"  {out_std}")
-    print(f"  {out_grad}")
-    print(f"Volume shape (z,y,x): {mean_vol.shape}  voxel={grid.voxel}  origin={grid.origin.tolist()}")
+    print(f"Wrote: {out_volume}")
+    print(f"  shape (z,y,x): {mean_vol.shape}  voxel={voxel}  origin={origin.tolist()}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

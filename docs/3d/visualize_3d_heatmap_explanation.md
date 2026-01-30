@@ -35,7 +35,7 @@ Outputs go to `--out-dir` (default: volume’s parent): e.g. **`heatmap_3d_scree
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--volume` | (required) | Path to `volume.npz`. |
+| `--in` | (required) | Path to `volume.npz`. Use `--volume` as alias. |
 | `--out-dir` | (volume’s parent) | Directory for screenshot (and optional HTML). |
 | `--mesh` | — | Optional mesh overlay (PLY/OBJ/GLB). |
 | `--screenshot` | — | Save `heatmap_3d_screenshot.png` in `--out-dir`. |
@@ -50,20 +50,26 @@ Outputs go to `--out-dir` (default: volume’s parent): e.g. **`heatmap_3d_scree
 ```bash
 # Interactive view + screenshot
 python3 pipelines/3d/visualize_3d_heatmap.py \
-  --volume "$RUN_DIR/exports/volume.npz" \
+  --in "$RUN_DIR/exports/volume.npz" \
   --out-dir "$RUN_DIR/exports" \
   --screenshot
 
 # Headless screenshot only (e.g. on server/Pi)
 python3 pipelines/3d/visualize_3d_heatmap.py \
-  --volume "$RUN_DIR/exports/volume.npz" \
+  --in "$RUN_DIR/exports/volume.npz" \
   --out-dir "$RUN_DIR/exports" \
   --screenshot \
   --no-show
 
+# Slices only (PNGs, no GUI)
+python3 pipelines/3d/visualize_3d_heatmap.py \
+  --in "$RUN_DIR/exports/volume.npz" \
+  --out-dir "$RUN_DIR/exports" \
+  --show-slices --save --no-show
+
 # Custom isosurface, slice along y, optional mesh
 python3 pipelines/3d/visualize_3d_heatmap.py \
-  --volume "$RUN_DIR/exports/volume.npz" \
+  --in "$RUN_DIR/exports/volume.npz" \
   --out-dir "$RUN_DIR/exports" \
   --mesh "$RUN_DIR/raw/mesh.ply" \
   --slice-axis y \
