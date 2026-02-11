@@ -41,16 +41,22 @@ This additionally installs `depthai`, `opencv-python`, `open3d`, and the `libusb
 export RUN_DIR="data/runs/run_$(date +%Y%m%d_%H%M)"
 mkdir -p "$RUN_DIR"/{raw,processed,exports}
 
-# 2. Capture: start magnetometer logger (on Pi), then scan with Polycam/RTAB-Map
+# 2. Capture: start magnetometer logger (on Pi), then scan with Polycam/RTAB-Map/OAK-D
 #    Use mag_to_csv_v2.py (or mag_calibrate_zero_logger.py if you have it)
 python3 pipelines/2d/mag_to_csv_v2.py --out "$RUN_DIR/raw/mag_run.csv" --hz 80 --units uT --samples 1
 
-# 3. Export trajectory from your scan app (see Capture Day below), put files in $RUN_DIR/raw/
+# 3. Export trajectory from your scan source, put files in $RUN_DIR/raw/
 
-# 4. Processing (on Mac or Pi)
+# 4. Processing — pick ONE trajectory source (on Mac or Pi):
+#    Option A: Polycam
 python3 pipelines/3d/polycam_raw_to_trajectory.py --in "$RUN_DIR/raw/PolycamRawExport" --out "$RUN_DIR/processed/trajectory.csv"
-# OR: python3 pipelines/3d/rtabmap_poses_to_trajectory.py --in "$RUN_DIR/raw/rtabmap_poses.txt" --out "$RUN_DIR/processed/trajectory.csv"
+#    Option B: RTAB-Map
+# python3 pipelines/3d/rtabmap_poses_to_trajectory.py --in "$RUN_DIR/raw/rtabmap_poses.txt" --out "$RUN_DIR/processed/trajectory.csv"
+#    Option C: OAK-D Lite (capture first, then reconstruct)
+# python3 pipelines/3d/capture_oak_rgbd.py --out "$RUN_DIR/raw/oak_rgbd"
+# python3 pipelines/3d/open3d_reconstruct.py --in "$RUN_DIR/raw/oak_rgbd" --no-viz
 
+# 5. Fuse magnetometer with trajectory
 python3 pipelines/3d/fuse_mag_with_trajectory.py \
   --trajectory "$RUN_DIR/processed/trajectory.csv" \
   --mag "$RUN_DIR/raw/mag_run.csv" \
@@ -58,19 +64,21 @@ python3 pipelines/3d/fuse_mag_with_trajectory.py \
   --out "$RUN_DIR/processed/mag_world.csv" \
   --value-type zero_mag
 
+# 6. Voxel volume
 python3 pipelines/3d/mag_world_to_voxel_volume.py \
   --in "$RUN_DIR/processed/mag_world.csv" \
   --out "$RUN_DIR/exports/volume.npz" \
   --voxel-size 0.02 \
   --margin 0.1
 
+# 7. Visualise
 python3 pipelines/3d/visualize_3d_heatmap.py \
   --in "$RUN_DIR/exports/volume.npz" \
   --out-dir "$RUN_DIR/exports" \
   --screenshot
 ```
 
-(Use `--volume` as an alias for `--in` if you prefer.) Expected outputs: `trajectory.csv`, `mag_world.csv`, `volume.npz`, and `exports/heatmap_3d_screenshot.png`.
+(Use `--volume` as an alias for `--in` if you prefer.) Expected outputs: `trajectory.csv`, `mag_world.csv`, `volume.npz`, and `exports/heatmap_3d_screenshot.png`. If using OAK-D, also `open3d_mesh.ply`.
 
 ---
 
@@ -91,9 +99,9 @@ python3 pipelines/3d/visualize_3d_heatmap.py \
 [PROCESSING DAY]
   Option A:                                       Option B:
   polycam_raw_to_trajectory.py                    open3d_reconstruct.py
-    OR rtabmap_poses_to_trajectory.py               → open3d_mesh.ply (3D mesh)
-       |                                              (trajectory from odometry poses
-       v                                               can be exported for mag fusion)
+    OR rtabmap_poses_to_trajectory.py               → trajectory.csv + open3d_mesh.ply
+       |                                              |
+       v                                              v
   trajectory.csv (t_rel_s, x, y, z, qx, qy, qz, qw)
        |
        +--------+ extrinsics.json (ruler: phone/camera -> mag frame)
@@ -372,6 +380,18 @@ python3 pipelines/3d/rtabmap_poses_to_trajectory.py \
 ```
 
 Output: same columns, `t_rel_s` normalized from first pose.
+
+**Option C — OAK-D Lite + Open3D** (if you captured with `capture_oak_rgbd.py`)
+
+```bash
+python3 pipelines/3d/open3d_reconstruct.py \
+  --in "$RUN_DIR/raw/oak_rgbd" \
+  --out "$RUN_DIR/processed/trajectory.csv" \
+  --mesh "$RUN_DIR/exports/open3d_mesh.ply" \
+  --no-viz
+```
+
+Output: same `trajectory.csv` columns (from frame-to-frame odometry) + `open3d_mesh.ply` in exports. See the [OAK-D section](#oak-d-lite-capture--open3d-reconstruction-option-b) above for the full workflow.
 
 ### Step 2: Fuse magnetometer with trajectory
 

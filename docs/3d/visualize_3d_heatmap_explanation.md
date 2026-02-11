@@ -67,11 +67,12 @@ python3 pipelines/3d/visualize_3d_heatmap.py \
   --out-dir "$RUN_DIR/exports" \
   --show-slices --save --no-show
 
-# Custom isosurface, slice along y, optional mesh
+# Custom isosurface, slice along y, optional mesh overlay
+# (use the OAK-D mesh from exports/, or any PLY/OBJ/GLB)
 python3 pipelines/3d/visualize_3d_heatmap.py \
   --in "$RUN_DIR/exports/volume.npz" \
   --out-dir "$RUN_DIR/exports" \
-  --mesh "$RUN_DIR/raw/mesh.ply" \
+  --mesh "$RUN_DIR/exports/open3d_mesh.ply" \
   --slice-axis y \
   --isosurface-value 0.5 \
   --screenshot

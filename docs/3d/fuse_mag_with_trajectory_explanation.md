@@ -8,7 +8,7 @@ This document explains the 3D pipeline script that fuses a timestamped magnetome
 
 During a 3D scan, the magnetometer is rigidly mounted relative to the phone (or camera rig). The phone provides a trajectory (position + orientation over time); the magnetometer provides field samples with timestamps. **`fuse_mag_with_trajectory.py`** aligns these by time, applies the magnetometer‑to‑camera extrinsics (translation and optional rotation), and writes each mag sample with its **world-frame** position `(x, y, z)` and a chosen value (e.g. baseline‑subtracted magnitude).
 
-**Inputs:** `trajectory.csv` (from Polycam or RTAB‑Map), `mag_run.csv` (from `mag_to_csv_v2` or `mag_calibrate_zero_logger`), `extrinsics.json` (translation and optionally rotation from camera to magnetometer).
+**Inputs:** `trajectory.csv` (from `polycam_raw_to_trajectory`, `rtabmap_poses_to_trajectory`, or `open3d_reconstruct`), `mag_run.csv` (from `mag_to_csv_v2` or `mag_calibrate_zero_logger`), `extrinsics.json` (translation and optionally rotation from camera to magnetometer).
 
 **Output:** `mag_world.csv` with columns `t_rel_s`, `x`, `y`, `z`, `value`, `value_type`.
 
@@ -79,7 +79,11 @@ python3 pipelines/3d/fuse_mag_with_trajectory.py \
 
 ## Relation to other 3D scripts
 
-- **Before:** `polycam_raw_to_trajectory` or `rtabmap_poses_to_trajectory` → `trajectory.csv`; `mag_to_csv_v2` or `mag_calibrate_zero_logger` → `mag_run.csv`.
+- **Before:** `trajectory.csv` from one of three sources:
+  - **`polycam_raw_to_trajectory`** (Polycam Raw Data export)
+  - **`rtabmap_poses_to_trajectory`** (RTAB-Map pose export)
+  - **`open3d_reconstruct`** (OAK-D Lite RGB-D capture + Open3D odometry)
+- **Before:** `mag_run.csv` from `mag_to_csv_v2` or `mag_calibrate_zero_logger`.
 - **After:** `mag_world_to_voxel_volume` reads `mag_world.csv` to build the 3D voxel volume.
 
 See [PIPELINE_3D.md](PIPELINE_3D.md) for the full 3D runbook.

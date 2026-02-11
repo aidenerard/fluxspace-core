@@ -54,6 +54,8 @@ python3 pipelines/3d/rtabmap_poses_to_trajectory.py \
 ## Relation to other 3D scripts
 
 - **Output** `trajectory.csv` is used by **`fuse_mag_with_trajectory`** together with the mag log and **`extrinsics.json`**.
-- **Alternative:** **`polycam_raw_to_trajectory`** produces the same CSV shape from Polycam Raw Data export.
+- **Alternatives** that produce the same CSV shape:
+  - **`polycam_raw_to_trajectory`** — from Polycam Raw Data export.
+  - **`open3d_reconstruct`** — from OAK-D Lite RGB-D capture + Open3D odometry.
 
 See [PIPELINE_3D.md](PIPELINE_3D.md) for the full 3D runbook.
