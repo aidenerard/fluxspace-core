@@ -44,7 +44,7 @@ def main():
     pipeline = dai.Pipeline()
 
     # Use new Camera node if available; otherwise fall back to legacy nodes
-    Camera = getattr(dai.node, "Camera", None)
+    Camera = None  # forced legacy nodes
 
     if Camera is not None:
         cam = pipeline.create(Camera)
@@ -77,7 +77,7 @@ def main():
         monoR.setBoardSocket(dai.CameraBoardSocket.RIGHT)
 
         stereo = pipeline.create(dai.node.StereoDepth)
-        preset = getattr(dai.node.StereoDepth.PresetMode, "HIGH_DENSITY", dai.node.StereoDepth.PresetMode.FAST_DENSITY)
+        preset = dai.node.StereoDepth.PresetMode.HIGH_DENSITY
         stereo.setDefaultProfilePreset(preset)
         stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
         stereo.setOutputSize(CAP_W, CAP_H)
