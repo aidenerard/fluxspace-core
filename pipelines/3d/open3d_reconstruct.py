@@ -9,7 +9,7 @@ frame-to-frame RGB-D odometry.
 Inputs  (from capture_oak_rgbd.py output directory):
   color/color_*.jpg       colour frames
   depth/depth_*.png       16-bit depth PNGs (mm)
-  timestamps.csv          idx, t_wall_s, t_device_ms
+  timestamps.csv          idx, t_wall_s, t_rgb_dev_ms, t_depth_dev_ms
   intrinsics.json         (optional) fx, fy, cx, cy, width, height
 
 Outputs:
@@ -106,7 +106,12 @@ def load_intrinsics(in_dir: Path, width: int, height: int) -> o3d.camera.Pinhole
 
 
 def load_timestamps(in_dir: Path) -> dict[int, float]:
-    """Load timestamps.csv -> {idx: t_device_ms}. Empty dict if file missing."""
+    """Load timestamps.csv -> {idx: t_device_ms}. Empty dict if file missing.
+
+    Handles both column naming conventions:
+      - t_rgb_dev_ms  (current capture_oak_rgbd.py)
+      - t_device_ms   (legacy / docs)
+    """
     ts_path = in_dir / "timestamps.csv"
     if not ts_path.exists():
         return {}
@@ -115,7 +120,15 @@ def load_timestamps(in_dir: Path) -> dict[int, float]:
         reader = csv.DictReader(f)
         for row in reader:
             try:
-                result[int(row["idx"])] = float(row["t_device_ms"])
+                idx = int(row["idx"])
+                # Try current column name first, then legacy fallback
+                if "t_rgb_dev_ms" in row:
+                    result[idx] = float(row["t_rgb_dev_ms"])
+                elif "t_device_ms" in row:
+                    result[idx] = float(row["t_device_ms"])
+                elif "t_wall_s" in row:
+                    # Last resort: wall-clock seconds -> convert to ms
+                    result[idx] = float(row["t_wall_s"]) * 1000.0
             except (KeyError, ValueError):
                 pass
     return result

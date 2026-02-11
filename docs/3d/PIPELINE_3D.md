@@ -589,6 +589,8 @@ Detailed docs for each 3D pipeline script:
 | `mag_world_to_voxel_volumeV2_gpr` | [mag_world_to_voxel_volumeV2_gpr_explanation.md](mag_world_to_voxel_volumeV2_gpr_explanation.md) |
 | `visualize_3d_heatmapV2_gpr` | [visualize_3d_heatmapV2_gpr_explanation.md](visualize_3d_heatmapV2_gpr_explanation.md) |
 
+**Quick reference:** [OAK_D_RUN_CHECKLIST.md](OAK_D_RUN_CHECKLIST.md) — copy-paste commands for every OAK-D + mag capture session.
+
 See also: [new_3d_scan_explanation.md](new_3d_scan_explanation.md), [backup_scans_to_usb_explanation.md](backup_scans_to_usb_explanation.md), [backup_usb_3d_explanation.md](backup_usb_3d_explanation.md).
 
 ---
