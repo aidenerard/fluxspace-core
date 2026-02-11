@@ -100,7 +100,7 @@ def main() -> int:
     # --- DepthAI pipeline ---
     pipeline = dai.Pipeline()
 
-    cam = pipeline.createColorCamera()
+    cam = pipeline.create(dai.node.ColorCamera)
     cam.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
     cam.setInterleaved(False)
     cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
