@@ -8,6 +8,13 @@ scikit-learn
 # 3D visualization (optional; required for --screenshot)
 pyvista
 
+# OAK-D Lite capture (optional; required for capture_oak_rgbd.py)
+# depthai
+# opencv-python
+
+# Open3D reconstruction (optional; required for open3d_reconstruct.py)
+# open3d
+
 # 2D magnetometer capture (Pi)
 # sparkfun-qwiic
 # sparkfun-qwiic-mmc5983ma

@@ -18,6 +18,7 @@ Fluxspace Core has two pipelines: **2D** (grid survey + anomaly heatmaps) and **
 |----------|----------|-------------|-----|
 | 2D grid survey, anomaly maps, B_total heatmaps | **2D** | `pipelines/2d/mag_to_csv.py`, `validate_and_diagnosticsV1.py`, `compute_local_anomaly_v2.py`, `interpolate_to_heatmapV1.py`, `interpolate_to_Btotal_heatmap.py`; `./tools/2d/new_run.sh` | [PIPELINE_2D.md](../2d/PIPELINE_2D.md) |
 | 3D scan (Polycam/RTAB-Map) + mag fusion, voxel heatmap | **3D** | `pipelines/3d/mag_calibrate_zero_logger.py` or `pipelines/2d/mag_to_csv_v2.py`, `polycam_raw_to_trajectory.py`, `rtabmap_poses_to_trajectory.py`, `fuse_mag_with_trajectory.py`, `mag_world_to_voxel_volume.py`, `visualize_3d_heatmap.py`; `./tools/3d/new_3d_scan.sh`, `./tools/3d/backup_usb_3d.sh` | [PIPELINE_3D.md](../3d/PIPELINE_3D.md) |
+| 3D scan (OAK-D Lite) + Open3D reconstruction | **3D** | `pipelines/3d/capture_oak_rgbd.py`, `pipelines/3d/open3d_reconstruct.py` | [PIPELINE_3D.md](../3d/PIPELINE_3D.md) (see "OAK-D Lite" section) |
 
 ---
 

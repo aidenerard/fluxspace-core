@@ -22,7 +22,15 @@ chmod +x tools/3d/setup_pi.sh
 ./tools/3d/setup_pi.sh
 ```
 
-**What it installs:** System packages (I2C, python3-venv, pip), enables I2C, creates/reuses `~/fluxenv`, and installs Python deps: numpy, pandas, matplotlib, sparkfun-qwiic-mmc5983ma, **pyvista**. Reboot after first run if I2C was just enabled. See [raspberry_pi_setup.md](../raspberry_pi_setup.md) for full Pi setup and 3D usage.
+**What it installs:** System packages (I2C, python3-venv, pip), enables I2C, creates/reuses `~/fluxenv`, and installs Python deps: numpy, pandas, matplotlib, scipy, scikit-learn, sparkfun-qwiic-mmc5983ma, **pyvista**. Reboot after first run if I2C was just enabled. See [raspberry_pi_setup.md](../raspberry_pi_setup.md) for full Pi setup and 3D usage.
+
+**OAK-D Lite + Open3D (optional):** If you plan to use the OAK-D Lite for RGB-D capture and Open3D for reconstruction, add the `--with-oakd` flag:
+
+```bash
+./tools/3d/setup_pi.sh --with-oakd
+```
+
+This additionally installs `depthai`, `opencv-python`, `open3d`, and the `libusb` system package needed by DepthAI on Linux. On **Mac**, install these manually: `pip install depthai opencv-python open3d`.
 
 ---
 
@@ -70,23 +78,25 @@ python3 pipelines/3d/visualize_3d_heatmap.py \
 
 ```
 [CAPTURE DAY]
-  Phone (Polycam LiDAR Raw / RTAB-Map)     Pi + MMC5983MA (rigid ruler ~30 cm)
+  Option A: Phone (Polycam / RTAB-Map)          Option B: OAK-D Lite (DepthAI)
+  Pi + MMC5983MA (rigid ruler ~30 cm)            + optional Pi + MMC5983MA
        |                                              |
        v                                              v
-  3D scan app                                    mag_to_csv_v2.py
-  (export Raw Data / .db)                         (or mag_calibrate_zero_logger.py)
+  3D scan app                                    capture_oak_rgbd.py
+  (export Raw Data / .db)                         → oak_capture/ (color, depth, timestamps)
        |                                              |
        v                                              v
-  Polycam folder / rtabmap export                 mag_run.csv
-  (cameras, poses)                                (t_rel_s, bx, by, bz, b_total, row_type, note)
+  mag_to_csv_v2.py (or mag_calibrate_zero_logger.py) for mag capture (both options)
 
 [PROCESSING DAY]
-  polycam_raw_to_trajectory.py    OR    rtabmap_poses_to_trajectory.py
-       |                                        |
-       v                                        v
+  Option A:                                       Option B:
+  polycam_raw_to_trajectory.py                    open3d_reconstruct.py
+    OR rtabmap_poses_to_trajectory.py               → open3d_mesh.ply (3D mesh)
+       |                                              (trajectory from odometry poses
+       v                                               can be exported for mag fusion)
   trajectory.csv (t_rel_s, x, y, z, qx, qy, qz, qw)
        |
-       +--------+ extrinsics.json (ruler: phone -> mag frame)
+       +--------+ extrinsics.json (ruler: phone/camera -> mag frame)
        |
        v
   fuse_mag_with_trajectory.py  -->  mag_world.csv (t_rel_s, x, y, z, value, value_type)
@@ -157,8 +167,9 @@ data/runs/run_20250123_1430/
 
 ### 1. Setup
 
-- **Rig:** Magnetometer (MMC5983MA) mounted ~30 cm (1 foot) from phone on a rigid ruler; orientation fixed relative to phone.
-- **Phone:** Polycam LiDAR (Developer Mode → Raw Data export) **or** RTAB-Map iOS; ensure you can export poses/trajectory.
+- **Rig:** Magnetometer (MMC5983MA) mounted ~30 cm (1 foot) from phone/camera on a rigid ruler; orientation fixed relative to phone or OAK-D.
+- **Option A — Phone:** Polycam LiDAR (Developer Mode → Raw Data export) **or** RTAB-Map iOS; ensure you can export poses/trajectory.
+- **Option B — OAK-D Lite:** Luxonis OAK-D Lite connected via USB 3 to Mac (or Pi 5). No phone needed for geometry — the OAK-D provides RGB + stereo depth.
 - **Pi:** I2C enabled, `qwiic_mmc5983ma` installed; same venv as other fluxspace scripts.
 
 ### 2. Start magnetometer logger
@@ -204,6 +215,7 @@ If using **mag_calibrate_zero_logger.py** (capture-time calibration + zero): run
 
 - **Polycam:** Start LiDAR scan after the `start` marker; stop scan; use Developer Mode → **Export Raw Data** to a folder (e.g. copy to `$RUN_DIR/raw/PolycamRawExport`).
 - **RTAB-Map:** Record session; export database to Mac; open with `rtabmap-databaseViewer` and **Export poses** (TUM format or as documented); save to `$RUN_DIR/raw/rtabmap_poses.txt` (or similar).
+- **OAK-D Lite:** Run `capture_oak_rgbd.py` (see "OAK-D Lite capture + Open3D reconstruction" below). Walk slowly around the object for 30–60 seconds, then press **q** to stop. Frames are saved to `oak_capture/`.
 
 ### 4. Extrinsics and run folder
 
@@ -213,6 +225,67 @@ If using **mag_calibrate_zero_logger.py** (capture-time calibration + zero): run
 **Create extrinsics template (translation-only, 30 cm along +X):**  
 `printf '%s\n' '{ "translation_m": [0.30, 0.0, 0.0], "rotation_quat_xyzw": null }' > "$RUN_DIR/raw/extrinsics.json"`  
 Adjust `translation_m` to your measured ruler offset (meters).
+
+---
+
+## OAK-D Lite capture + Open3D reconstruction (Option B)
+
+This is an alternative to the Polycam / RTAB-Map workflow above. Instead of a phone, you use a **Luxonis OAK-D Lite** for both RGB and depth, and **Open3D** for offline 3D reconstruction.
+
+### Prerequisites
+
+```bash
+# In your virtualenv:
+pip install depthai opencv-python numpy open3d
+```
+
+Plug the OAK-D Lite into your Mac with a **USB 3** cable (direct port, avoid hubs for the first test).
+
+### Verify the camera
+
+```bash
+python -m depthai_demo
+```
+
+You should see a UI with colour and depth previews. If that works, the camera and cable are good.
+
+### Step 1 — Capture RGB + depth frames
+
+```bash
+python3 pipelines/3d/capture_oak_rgbd.py
+```
+
+- Walk slowly around a small object (box, chair, concrete block) for **30–60 seconds**.
+- Press **q** to stop.
+- Frames are saved to `oak_capture/color/`, `oak_capture/depth/`, and `oak_capture/timestamps.csv`.
+- Depth images are **16-bit PNG** with values in millimetres.
+
+See [capture_oak_rgbd_explanation.md](capture_oak_rgbd_explanation.md) for full details.
+
+### Step 2 — Reconstruct a 3D mesh
+
+```bash
+python3 pipelines/3d/open3d_reconstruct.py
+```
+
+- Reads `oak_capture/color/` and `oak_capture/depth/`.
+- Runs frame-to-frame RGB-D odometry to estimate camera poses.
+- Integrates all frames into a TSDF volume (1 cm voxels).
+- Extracts a coloured triangle mesh → `oak_capture/open3d_mesh.ply`.
+- Opens an Open3D viewer to display the result.
+
+See [open3d_reconstruct_explanation.md](open3d_reconstruct_explanation.md) for full details.
+
+### What to do next
+
+1. **Use real camera intrinsics** from OAK-D calibration (major quality improvement) — see the explanation doc for how to extract them.
+2. **Use a stronger SLAM backend** (RTAB-Map or ORB-SLAM3) for reduced drift on longer captures.
+3. **Export the trajectory** (camera poses) from the odometry loop → save as `trajectory.csv` → feed into `fuse_mag_with_trajectory.py` to fuse magnetometer data with the 3D geometry.
+
+### Platform notes
+
+- **Pi 5:** Can run capture + lightweight odometry on-device.
+- **Pi 4:** Recommended to record frames on the Pi, then transfer `oak_capture/` to a Mac for Open3D reconstruction.
 
 ---
 
@@ -358,16 +431,21 @@ python3 pipelines/3d/visualize_3d_heatmap.py \
 
 ## Dependencies (Python 3.10+)
 
-- **Required:** `numpy`, `pandas`, `matplotlib`, `scipy` (interpolation), `scikit-learn` (GPR), `pyvista` (3D viz / screenshot).
-- **Optional:** `open3d` (PLY/OBJ loading for overlay).
+- **Required (all workflows):** `numpy`, `pandas`, `matplotlib`, `scipy` (interpolation), `scikit-learn` (GPR), `pyvista` (3D viz / screenshot).
+- **OAK-D capture:** `depthai`, `opencv-python` (for `capture_oak_rgbd.py`).
+- **Open3D reconstruction:** `open3d` (for `open3d_reconstruct.py`; also used for PLY/OBJ loading in other scripts).
 
 **Mac / Linux:**
 
 ```bash
+# Core pipeline:
 pip install -U numpy pandas matplotlib scipy scikit-learn pyvista
+
+# OAK-D capture + Open3D reconstruction (optional, for OAK-D workflow):
+pip install depthai opencv-python open3d
 ```
 
-**Pi:** Run `./tools/3d/setup_pi.sh` (installs the above plus I2C/sensor libs). See [raspberry_pi_setup.md](../raspberry_pi_setup.md).
+**Pi:** Run `./tools/3d/setup_pi.sh` (installs the core deps plus I2C/sensor libs). For OAK-D on Pi, also install `depthai` and `opencv-python` in the same venv. See [raspberry_pi_setup.md](../raspberry_pi_setup.md).
 
 If a script needs a missing dependency, it will print a clear error and the package name.
 
@@ -389,6 +467,11 @@ If a script needs a missing dependency, it will print a clear error and the pack
 | **scikit-learn missing** | `pip install scikit-learn` (required for GPR method). |
 | **pyvista add_volume / scalar_range error** | Fixed in this repo: script uses `clim` (not `scalar_range`). Update the script or re-pull. |
 | **Headless / no GUI** | Use `--screenshot --no-show` for 3D screenshot only; use `--show-slices --save --no-show` for slice PNGs. |
+| **OAK-D not detected** | Ensure USB 3 cable is plugged directly into Mac (not a hub). Run `python -c "import depthai; print(depthai.Device.getAllAvailableDevices())"` to check. |
+| **OAK-D capture slow / laggy** | Reduce colour resolution or depth output size in `capture_oak_rgbd.py`. Ensure USB 3 (not USB 2). |
+| **Open3D mesh is empty or garbled** | Check that intrinsics roughly match the camera. Use real OAK-D calibration (see explanation doc). Ensure depth images are 16-bit PNG in mm. |
+| **Open3D odometry drift** | Expected for long captures with frame-to-frame only. Use a SLAM backend for better poses. |
+| **`depthai` install fails** | See [Luxonis docs](https://docs.luxonis.com/software/depthai/manual-install/). On macOS, `pip install depthai` should work. On Pi, may need `libusb` dev packages. |
 
 ---
 
@@ -411,8 +494,13 @@ Detailed docs for each 3D pipeline script:
 
 | Script | Explanation |
 |--------|-------------|
+| **OAK-D capture + Open3D** | |
+| `capture_oak_rgbd` | [capture_oak_rgbd_explanation.md](capture_oak_rgbd_explanation.md) |
+| `open3d_reconstruct` | [open3d_reconstruct_explanation.md](open3d_reconstruct_explanation.md) |
+| **Trajectory extraction** | |
 | `polycam_raw_to_trajectory` | [polycam_raw_to_trajectory_explanation.md](polycam_raw_to_trajectory_explanation.md) |
 | `rtabmap_poses_to_trajectory` | [rtabmap_poses_to_trajectory_explanation.md](rtabmap_poses_to_trajectory_explanation.md) |
+| **Mag fusion + voxel** | |
 | `fuse_mag_with_trajectory` | [fuse_mag_with_trajectory_explanation.md](fuse_mag_with_trajectory_explanation.md) |
 | `mag_world_to_voxel_volume` | [mag_world_to_voxel_volume_explanation.md](mag_world_to_voxel_volume_explanation.md) |
 | `visualize_3d_heatmap` | [visualize_3d_heatmap_explanation.md](visualize_3d_heatmap_explanation.md) |

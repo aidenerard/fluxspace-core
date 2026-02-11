@@ -77,7 +77,17 @@ chmod +x tools/3d/setup_pi.sh
 ./tools/3d/setup_pi.sh
 ```
 
-It uses the same `~/fluxenv` and adds **pyvista**. See [PIPELINE_3D.md](3d/PIPELINE_3D.md) for the 3D runbook.
+It uses the same `~/fluxenv` and adds **scipy**, **scikit-learn**, and **pyvista**.
+
+**For OAK-D Lite + Open3D** (optional — if you plan to use the OAK-D camera for RGB-D capture and Open3D for 3D reconstruction):
+
+```bash
+./tools/3d/setup_pi.sh --with-oakd
+```
+
+This additionally installs **depthai**, **opencv-python**, **open3d**, and the `libusb` system package. On **Mac**, install these manually: `pip install depthai opencv-python open3d`.
+
+See [PIPELINE_3D.md](3d/PIPELINE_3D.md) for the 3D runbook.
 
 ### 2.2. Reboot (Required After First-Time I2C Enable)
 
@@ -734,7 +744,7 @@ Wait ~20 seconds, then unplug power.
 **One-time setup:**
 1. SSH into Pi
 2. Clone repo
-3. Run `./tools/2d/setup_pi.sh` (2D pipeline), or `./tools/3d/setup_pi.sh` (3D pipeline: same venv + pyvista)
+3. Run `./tools/2d/setup_pi.sh` (2D pipeline), or `./tools/3d/setup_pi.sh` (3D pipeline: same venv + pyvista); add `--with-oakd` for OAK-D Lite + Open3D support
 4. Reboot
 5. Verify with `i2cdetect` and Python import
 
