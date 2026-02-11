@@ -148,17 +148,23 @@ Use one folder per capture session. All commands below assume either:
 data/runs/run_20250123_1430/
 ├── raw/
 │   ├── mag_run.csv              # From mag_to_csv_v2.py or mag_calibrate_zero_logger.py
-│   ├── extrinsics.json           # Ruler rig: translation (and optional rotation) phone -> mag
-│   ├── PolycamRawExport/         # OR: Polycam Raw Data export folder
+│   ├── extrinsics.json           # Ruler rig: translation (and optional rotation) camera -> mag
+│   ├── PolycamRawExport/         # Option A: Polycam Raw Data export folder
 │   │   └── (cameras.json or corrected_cameras, etc.)
-│   └── rtabmap_poses.txt        # OR: RTAB-Map "Export poses" (TUM format)
+│   ├── rtabmap_poses.txt         # Option A: RTAB-Map "Export poses" (TUM format)
+│   └── oak_rgbd/                 # Option B: OAK-D capture (from capture_oak_rgbd.py --out)
+│       ├── color/color_*.jpg
+│       ├── depth/depth_*.png     # 16-bit depth in mm
+│       ├── timestamps.csv        # idx, t_wall_s, t_device_ms
+│       └── intrinsics.json       # fx, fy, cx, cy (from OAK-D calibration)
 ├── processed/
 │   ├── trajectory.csv            # t_rel_s, x, y, z, qx, qy, qz, qw
+│   │                             # (from polycam / rtabmap / open3d_reconstruct)
 │   └── mag_world.csv             # t_rel_s, x, y, z, value, value_type
 └── exports/
     ├── volume.npz                # 3D voxel grid + origin, voxel_size, axes
     ├── heatmap_3d_screenshot.png
-    └── (optional) mesh.ply, heatmap_3d.html
+    └── (optional) open3d_mesh.ply, heatmap_3d.html
 ```
 
 ---
@@ -215,7 +221,7 @@ If using **mag_calibrate_zero_logger.py** (capture-time calibration + zero): run
 
 - **Polycam:** Start LiDAR scan after the `start` marker; stop scan; use Developer Mode → **Export Raw Data** to a folder (e.g. copy to `$RUN_DIR/raw/PolycamRawExport`).
 - **RTAB-Map:** Record session; export database to Mac; open with `rtabmap-databaseViewer` and **Export poses** (TUM format or as documented); save to `$RUN_DIR/raw/rtabmap_poses.txt` (or similar).
-- **OAK-D Lite:** Run `capture_oak_rgbd.py` (see "OAK-D Lite capture + Open3D reconstruction" below). Walk slowly around the object for 30–60 seconds, then press **q** to stop. Frames are saved to `oak_capture/`.
+- **OAK-D Lite:** Run `capture_oak_rgbd.py` (see "OAK-D Lite capture + Open3D reconstruction" below). Walk slowly around the object for 30–60 seconds, then press **q** to stop. Frames are saved to `--out` directory (default: `oak_capture/`; use `$RUN_DIR/raw/oak_rgbd` to place them inside the run folder).
 
 ### 4. Extrinsics and run folder
 
@@ -230,7 +236,7 @@ Adjust `translation_m` to your measured ruler offset (meters).
 
 ## OAK-D Lite capture + Open3D reconstruction (Option B)
 
-This is an alternative to the Polycam / RTAB-Map workflow above. Instead of a phone, you use a **Luxonis OAK-D Lite** for both RGB and depth, and **Open3D** for offline 3D reconstruction.
+This is an alternative to the Polycam / RTAB-Map workflow above. Instead of a phone, you use a **Luxonis OAK-D Lite** for both RGB and depth, and **Open3D** for offline 3D reconstruction. The outputs slot directly into the standard pipeline — `open3d_reconstruct.py` writes `trajectory.csv` in the same format as `polycam_raw_to_trajectory.py`.
 
 ### Prerequisites
 
@@ -249,43 +255,94 @@ python -m depthai_demo
 
 You should see a UI with colour and depth previews. If that works, the camera and cable are good.
 
-### Step 1 — Capture RGB + depth frames
+### Standalone (quick test, no run folder)
 
 ```bash
+# Capture (frames saved to oak_capture/ by default)
 python3 pipelines/3d/capture_oak_rgbd.py
-```
 
-- Walk slowly around a small object (box, chair, concrete block) for **30–60 seconds**.
-- Press **q** to stop.
-- Frames are saved to `oak_capture/color/`, `oak_capture/depth/`, and `oak_capture/timestamps.csv`.
-- Depth images are **16-bit PNG** with values in millimetres.
-
-See [capture_oak_rgbd_explanation.md](capture_oak_rgbd_explanation.md) for full details.
-
-### Step 2 — Reconstruct a 3D mesh
-
-```bash
+# Reconstruct (reads oak_capture/, writes oak_capture/trajectory.csv + oak_capture/open3d_mesh.ply)
 python3 pipelines/3d/open3d_reconstruct.py
 ```
 
-- Reads `oak_capture/color/` and `oak_capture/depth/`.
-- Runs frame-to-frame RGB-D odometry to estimate camera poses.
-- Integrates all frames into a TSDF volume (1 cm voxels).
-- Extracts a coloured triangle mesh → `oak_capture/open3d_mesh.ply`.
-- Opens an Open3D viewer to display the result.
+### Pipeline-integrated (inside a run folder)
 
-See [open3d_reconstruct_explanation.md](open3d_reconstruct_explanation.md) for full details.
+```bash
+# 1. Create run folder
+export RUN_DIR="data/runs/run_$(date +%Y%m%d_%H%M)"
+mkdir -p "$RUN_DIR"/{raw,processed,exports}
 
-### What to do next
+# 2. Capture RGB+depth into the run's raw/ directory
+python3 pipelines/3d/capture_oak_rgbd.py --out "$RUN_DIR/raw/oak_rgbd"
+#   -> $RUN_DIR/raw/oak_rgbd/color/  depth/  timestamps.csv  intrinsics.json
 
-1. **Use real camera intrinsics** from OAK-D calibration (major quality improvement) — see the explanation doc for how to extract them.
+# 3. Reconstruct -> trajectory.csv + mesh
+#    (auto-detects $RUN_DIR/processed/ and $RUN_DIR/exports/ from the input path)
+python3 pipelines/3d/open3d_reconstruct.py \
+  --in "$RUN_DIR/raw/oak_rgbd" \
+  --no-viz
+#   -> $RUN_DIR/processed/trajectory.csv
+#   -> $RUN_DIR/exports/open3d_mesh.ply
+
+# 4. (If using magnetometer) Fuse mag with the new trajectory — same as Option A
+python3 pipelines/3d/fuse_mag_with_trajectory.py \
+  --trajectory "$RUN_DIR/processed/trajectory.csv" \
+  --mag "$RUN_DIR/raw/mag_run.csv" \
+  --extrinsics "$RUN_DIR/raw/extrinsics.json" \
+  --out "$RUN_DIR/processed/mag_world.csv" \
+  --value-type zero_mag
+
+# 5. Voxel volume + visualise (unchanged from Option A)
+python3 pipelines/3d/mag_world_to_voxel_volume.py \
+  --in "$RUN_DIR/processed/mag_world.csv" \
+  --out "$RUN_DIR/exports/volume.npz"
+
+python3 pipelines/3d/visualize_3d_heatmap.py \
+  --in "$RUN_DIR/exports/volume.npz" \
+  --out-dir "$RUN_DIR/exports" \
+  --screenshot
+```
+
+Steps 4–5 are **identical** to the Polycam / RTAB-Map workflow — the OAK-D scripts just replace the capture and trajectory-extraction steps.
+
+### What the scripts produce
+
+| Script | Reads | Writes |
+|--------|-------|--------|
+| `capture_oak_rgbd.py` | OAK-D sensor (USB) | `color/`, `depth/`, `timestamps.csv`, `intrinsics.json` |
+| `open3d_reconstruct.py` | colour + depth frames | `trajectory.csv` (t_rel_s, x, y, z, qx, qy, qz, qw), `open3d_mesh.ply` |
+
+### CLI flags
+
+**`capture_oak_rgbd.py`:**
+
+| Flag | Description |
+|------|-------------|
+| `--out DIR` | Output directory. Default: `oak_capture`. Use `$RUN_DIR/raw/oak_rgbd` for pipeline. |
+| `--no-preview` | Disable OpenCV preview windows (headless / Pi). |
+
+**`open3d_reconstruct.py`:**
+
+| Flag | Description |
+|------|-------------|
+| `--in DIR` | Input directory (from capture). Default: `oak_capture`. |
+| `--out PATH` | Trajectory CSV output. Default: auto-detect (`$RUN_DIR/processed/trajectory.csv` or `<in>/trajectory.csv`). |
+| `--mesh PATH` | Mesh PLY output. Default: auto-detect (`$RUN_DIR/exports/open3d_mesh.ply` or `<in>/open3d_mesh.ply`). |
+| `--voxel-size M` | TSDF voxel size in metres. Default: 0.01. |
+| `--no-viz` | Skip Open3D interactive viewer (headless / CI). |
+
+See [capture_oak_rgbd_explanation.md](capture_oak_rgbd_explanation.md) and [open3d_reconstruct_explanation.md](open3d_reconstruct_explanation.md) for full details.
+
+### Improving quality
+
+1. **Real camera intrinsics** are now saved automatically by `capture_oak_rgbd.py` (`intrinsics.json`) and loaded by `open3d_reconstruct.py` — no manual step needed.
 2. **Use a stronger SLAM backend** (RTAB-Map or ORB-SLAM3) for reduced drift on longer captures.
-3. **Export the trajectory** (camera poses) from the odometry loop → save as `trajectory.csv` → feed into `fuse_mag_with_trajectory.py` to fuse magnetometer data with the 3D geometry.
+3. **Tune TSDF voxels:** `--voxel-size 0.005` for finer detail (slower), `0.02` for speed.
 
 ### Platform notes
 
 - **Pi 5:** Can run capture + lightweight odometry on-device.
-- **Pi 4:** Recommended to record frames on the Pi, then transfer `oak_capture/` to a Mac for Open3D reconstruction.
+- **Pi 4:** Recommended to record frames on the Pi (`capture_oak_rgbd.py --no-preview`), then transfer the folder to a Mac for Open3D reconstruction.
 
 ---
 
@@ -445,7 +502,7 @@ pip install -U numpy pandas matplotlib scipy scikit-learn pyvista
 pip install depthai opencv-python open3d
 ```
 
-**Pi:** Run `./tools/3d/setup_pi.sh` (installs the core deps plus I2C/sensor libs). For OAK-D on Pi, also install `depthai` and `opencv-python` in the same venv. See [raspberry_pi_setup.md](../raspberry_pi_setup.md).
+**Pi:** Run `./tools/3d/setup_pi.sh` (installs the core deps plus I2C/sensor libs). For OAK-D on Pi, run `./tools/3d/setup_pi.sh --with-oakd` to also install `depthai`, `opencv-python`, and `open3d`. See [raspberry_pi_setup.md](../raspberry_pi_setup.md).
 
 If a script needs a missing dependency, it will print a clear error and the package name.
 
@@ -479,7 +536,9 @@ If a script needs a missing dependency, it will print a clear error and the pack
 
 | Step | Output | Columns / content |
 |------|--------|-------------------|
-| Trajectory | `processed/trajectory.csv` | `t_rel_s, x, y, z, qx, qy, qz, qw` |
+| OAK-D capture | `raw/oak_rgbd/` | `color/`, `depth/`, `timestamps.csv`, `intrinsics.json` |
+| Trajectory (any source) | `processed/trajectory.csv` | `t_rel_s, x, y, z, qx, qy, qz, qw` |
+| Open3D mesh (OAK-D only) | `exports/open3d_mesh.ply` | Coloured triangle mesh (PLY) |
 | Fuse | `processed/mag_world.csv` | `t_rel_s, x, y, z, value, value_type` |
 | Voxel | `exports/volume.npz` | 3D array + `origin`, `voxel_size`, axis arrays |
 | Viz | `exports/heatmap_3d_screenshot.png` | Slice + isosurface view; optional HTML |
