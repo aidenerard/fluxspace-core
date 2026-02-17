@@ -245,18 +245,25 @@ class FluxSpaceViewer:
         if self.chk_heat.checked:
             self._rebuild_heat()
 
-    def _combined_bounds(self) -> o3d.geometry.AxisAlignedBoundingBox | None:
+    def _combined_bounds(self):
         boxes = []
         if self.chk_mesh.checked and self.mesh is not None and not self.mesh.is_empty():
             boxes.append(self.mesh.get_axis_aligned_bounding_box())
         if self.chk_heat.checked and self._heat_geom is not None and not self._heat_geom.is_empty():
             boxes.append(self._heat_geom.get_axis_aligned_bounding_box())
+
         if not boxes:
             return None
-        bb = boxes[0]
-        for b in boxes[1:]:
-            bb = bb + b
+
+        mins = np.vstack([b.get_min_bound() for b in boxes])
+        maxs = np.vstack([b.get_max_bound() for b in boxes])
+
+        bb = o3d.geometry.AxisAlignedBoundingBox(
+            mins.min(axis=0),
+            maxs.max(axis=0),
+        )
         return bb
+
 
     def _on_reframe(self):
         bb = self._combined_bounds()
