@@ -6,19 +6,15 @@ Reconstruct a 3D triangle mesh from RGB + depth frames captured by
 capture_oak_rgbd.py, using Open3D TSDF volume integration and
 frame-to-frame RGB-D odometry.
 
-Inputs  (from capture_oak_rgbd.py output directory):
+Inputs  (from capture_oak_rgbd.py output, default: RUN_DIR/raw/oak_rgbd):
   color/color_*.jpg       colour frames
   depth/depth_*.png       16-bit depth PNGs (mm)
   timestamps.csv          idx, t_wall_s, t_rgb_dev_ms, t_depth_dev_ms
   intrinsics.json         (optional) fx, fy, cx, cy, width, height
 
-Outputs:
+Outputs (default: RUN_DIR/processed/):
   trajectory.csv          t_rel_s, x, y, z, qx, qy, qz, qw
-                          (same format as polycam_raw_to_trajectory / rtabmap_poses_to_trajectory;
-                           directly usable by fuse_mag_with_trajectory.py)
   open3d_mesh.ply         coloured triangle mesh
-
-Matches fluxspace style: argparse, clear prints, sane defaults.
 """
 
 from __future__ import annotations
@@ -33,17 +29,16 @@ from pathlib import Path
 import numpy as np
 import open3d as o3d
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from run_paths import infer_run_dir_from_path  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
-DEFAULT_IN = "oak_capture"
 DEFAULT_VOXEL_LENGTH = 0.01    # 1 cm
 DEFAULT_SDF_TRUNC = 0.04       # 4 cm
 DEFAULT_DEPTH_SCALE = 1000.0   # mm -> m
 DEFAULT_DEPTH_TRUNC = 3.0      # metres
-
-# Approximate intrinsics (used only if intrinsics.json is missing)
 APPROX_FX = 600.0
 APPROX_FY = 600.0
 
@@ -52,7 +47,7 @@ APPROX_FY = 600.0
 # Helpers
 # ---------------------------------------------------------------------------
 def rotation_matrix_to_quat(R: np.ndarray) -> np.ndarray:
-    """Convert a 3x3 rotation matrix to a quaternion (x, y, z, w)."""
+    """Convert a 3x3 rotation matrix to quaternion (x, y, z, w)."""
     trace = R[0, 0] + R[1, 1] + R[2, 2]
     if trace > 0:
         s = 0.5 / np.sqrt(trace + 1.0)
@@ -83,12 +78,10 @@ def rotation_matrix_to_quat(R: np.ndarray) -> np.ndarray:
 
 
 def load_intrinsics(in_dir: Path, width: int, height: int) -> o3d.camera.PinholeCameraIntrinsic:
-    """Load intrinsics.json if present, else use approximate values."""
     intr_path = in_dir / "intrinsics.json"
     fx, fy = APPROX_FX, APPROX_FY
     cx, cy = width / 2.0, height / 2.0
     source = "approximate"
-
     if intr_path.exists():
         try:
             with open(intr_path, "r", encoding="utf-8") as f:
@@ -100,18 +93,12 @@ def load_intrinsics(in_dir: Path, width: int, height: int) -> o3d.camera.Pinhole
             source = data.get("source", "intrinsics.json")
         except Exception as exc:
             print(f"WARNING: Could not read {intr_path} ({exc}); using approximate intrinsics.")
-
     print(f"  Intrinsics ({source}): fx={fx:.1f} fy={fy:.1f} cx={cx:.1f} cy={cy:.1f}")
     return o3d.camera.PinholeCameraIntrinsic(width, height, fx, fy, cx, cy)
 
 
 def load_timestamps(in_dir: Path) -> dict[int, float]:
-    """Load timestamps.csv -> {idx: t_device_ms}. Empty dict if file missing.
-
-    Handles both column naming conventions:
-      - t_rgb_dev_ms  (current capture_oak_rgbd.py)
-      - t_device_ms   (legacy / docs)
-    """
+    """Load timestamps.csv -> {idx: t_ms}."""
     ts_path = in_dir / "timestamps.csv"
     if not ts_path.exists():
         return {}
@@ -121,13 +108,11 @@ def load_timestamps(in_dir: Path) -> dict[int, float]:
         for row in reader:
             try:
                 idx = int(row["idx"])
-                # Try current column name first, then legacy fallback
                 if "t_rgb_dev_ms" in row:
                     result[idx] = float(row["t_rgb_dev_ms"])
                 elif "t_device_ms" in row:
                     result[idx] = float(row["t_device_ms"])
                 elif "t_wall_s" in row:
-                    # Last resort: wall-clock seconds -> convert to ms
                     result[idx] = float(row["t_wall_s"]) * 1000.0
             except (KeyError, ValueError):
                 pass
@@ -139,29 +124,32 @@ def load_timestamps(in_dir: Path) -> dict[int, float]:
 # ---------------------------------------------------------------------------
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Open3D TSDF reconstruction from OAK-D RGBD capture -> trajectory.csv + mesh PLY"
+        description="Open3D TSDF reconstruction -> processed/trajectory.csv + processed/open3d_mesh.ply"
     )
     p.add_argument(
-        "--in", dest="input_dir", default=DEFAULT_IN,
-        help=f"Input directory with color/, depth/, timestamps.csv, intrinsics.json. Default: {DEFAULT_IN}",
+        "--in", dest="input_dir", required=True,
+        help="Input directory with color/, depth/, etc.  (e.g. $RUN_DIR/raw/oak_rgbd)",
+    )
+    p.add_argument(
+        "--out-dir", default="",
+        help="Directory for trajectory.csv + open3d_mesh.ply. "
+             "Default: auto-detect $RUN_DIR/processed/ from --in path.",
     )
     p.add_argument(
         "--out", default="",
-        help="Output trajectory.csv path. Default: auto-detect from input dir "
-             "(e.g. $RUN_DIR/processed/trajectory.csv if input is $RUN_DIR/raw/*).",
+        help="Override: explicit trajectory.csv path.",
     )
     p.add_argument(
         "--mesh", default="",
-        help="Output mesh PLY path. Default: auto-detect "
-             "(e.g. $RUN_DIR/exports/open3d_mesh.ply or <input_dir>/open3d_mesh.ply).",
+        help="Override: explicit mesh PLY path.",
     )
     p.add_argument(
         "--voxel-size", type=float, default=DEFAULT_VOXEL_LENGTH,
-        help=f"TSDF voxel size in metres. Default: {DEFAULT_VOXEL_LENGTH}",
+        help=f"TSDF voxel size in metres (default: {DEFAULT_VOXEL_LENGTH})",
     )
     p.add_argument(
         "--no-viz", action="store_true",
-        help="Skip the Open3D interactive viewer (useful for headless / CI).",
+        help="Skip the Open3D interactive viewer.",
     )
     return p.parse_args()
 
@@ -171,7 +159,7 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 def main() -> int:
     args = parse_args()
-    in_dir = Path(args.input_dir)
+    in_dir = Path(args.input_dir).expanduser().resolve()
 
     if not in_dir.is_dir():
         print(f"ERROR: Input directory not found: {in_dir}", file=sys.stderr)
@@ -192,7 +180,6 @@ def main() -> int:
     print(f"Found {n_frames} frame pairs in {in_dir}")
 
     # --- Intrinsics ---
-    # Infer image size from first depth image
     sample_depth = o3d.io.read_image(depth_files[0])
     width = np.asarray(sample_depth).shape[1]
     height = np.asarray(sample_depth).shape[0]
@@ -204,6 +191,7 @@ def main() -> int:
         t0 = ts_map.get(0, 0.0)
         print(f"  Loaded {len(ts_map)} timestamps from timestamps.csv")
     else:
+        t0 = 0.0
         print("  WARNING: No timestamps.csv found; using frame index / 30 fps for t_rel_s.")
 
     # --- TSDF volume ---
@@ -214,22 +202,20 @@ def main() -> int:
         color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
     )
 
-    # --- Frame-to-frame odometry + TSDF integration ---
+    # --- Odometry + TSDF integration ---
     prev_rgbd = None
     prev_pose = np.eye(4)
-    frame_poses: list[np.ndarray] = []   # one 4x4 per frame
+    frame_poses: list[np.ndarray] = []
 
     for i, (cf, df) in enumerate(zip(color_files, depth_files)):
         color = o3d.io.read_image(cf)
         depth = o3d.io.read_image(df)
-
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
             color, depth,
-            depth_scale=DEFAULT_DEPTH_SCALE,    # mm -> metres
+            depth_scale=DEFAULT_DEPTH_SCALE,
             depth_trunc=DEFAULT_DEPTH_TRUNC,
             convert_rgb_to_intensity=False,
         )
-
         if prev_rgbd is not None:
             option = o3d.pipelines.odometry.OdometryOption()
             success, trans, info = o3d.pipelines.odometry.compute_rgbd_odometry(
@@ -239,7 +225,6 @@ def main() -> int:
             )
             if success:
                 prev_pose = prev_pose @ trans
-            # if it fails, keep previous pose (demo-friendly)
 
         frame_poses.append(prev_pose.copy())
         volume.integrate(rgbd, intr, np.linalg.inv(prev_pose))
@@ -250,71 +235,52 @@ def main() -> int:
 
     print(f"  Integrated all {n_frames} frames.")
 
-    # --- Extract mesh ---
     mesh = volume.extract_triangle_mesh()
     mesh.compute_vertex_normals()
 
-    # --- Resolve output paths ---
-    # Trajectory
-    if args.out:
-        traj_path = Path(args.out)
+    # --- Resolve output directory ---
+    if args.out_dir:
+        out_dir = Path(args.out_dir).expanduser().resolve()
     else:
-        parent = in_dir.parent
-        if parent.name == "raw" and (parent.parent / "processed").exists():
-            traj_path = parent.parent / "processed" / "trajectory.csv"
+        run = infer_run_dir_from_path(in_dir)
+        if run is not None:
+            out_dir = run / "processed"
         else:
-            traj_path = in_dir / "trajectory.csv"
+            out_dir = in_dir.parent  # fallback: next to input
 
-    # Mesh
-    if args.mesh:
-        mesh_path = Path(args.mesh)
-    else:
-        parent = in_dir.parent
-        if parent.name == "raw" and (parent.parent / "exports").exists():
-            mesh_path = parent.parent / "exports" / "open3d_mesh.ply"
-        else:
-            mesh_path = in_dir / "open3d_mesh.ply"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
+    traj_path = Path(args.out) if args.out else out_dir / "trajectory.csv"
+    mesh_path = Path(args.mesh) if args.mesh else out_dir / "open3d_mesh.ply"
     traj_path.parent.mkdir(parents=True, exist_ok=True)
     mesh_path.parent.mkdir(parents=True, exist_ok=True)
 
     # --- Write trajectory.csv ---
-    # Format: t_rel_s, x, y, z, qx, qy, qz, qw
-    # (same as polycam_raw_to_trajectory / rtabmap_poses_to_trajectory)
     with open(traj_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["t_rel_s", "x", "y", "z", "qx", "qy", "qz", "qw"])
-
         for i, pose in enumerate(frame_poses):
-            # Timestamp: use device timestamps if available, else frame index / 30 fps
             if ts_map:
                 t_dev_ms = ts_map.get(i, i * (1000.0 / 30.0))
-                t_rel = (t_dev_ms - t0) / 1000.0   # ms -> s, relative to first frame
+                t_rel = (t_dev_ms - t0) / 1000.0
             else:
                 t_rel = float(i) * (1.0 / 30.0)
-
-            # Position from 4x4 pose
             x, y, z = pose[0, 3], pose[1, 3], pose[2, 3]
-
-            # Quaternion from 3x3 rotation block
             R = pose[:3, :3]
             qx, qy, qz, qw = rotation_matrix_to_quat(R)
-
             writer.writerow([
                 f"{t_rel:.6f}",
                 f"{x:.6f}", f"{y:.6f}", f"{z:.6f}",
                 f"{qx:.6f}", f"{qy:.6f}", f"{qz:.6f}", f"{qw:.6f}",
             ])
 
-    print(f"Wrote trajectory: {traj_path} ({len(frame_poses)} poses)")
+    print(f"Wrote trajectory : {traj_path}  ({len(frame_poses)} poses)")
     t_max = ((ts_map.get(len(frame_poses) - 1, 0) - t0) / 1000.0) if ts_map else (len(frame_poses) - 1) / 30.0
-    print(f"  t_rel_s range: 0.000 .. {t_max:.3f} s")
+    print(f"  t_rel_s range  : 0.000 .. {t_max:.3f} s")
 
-    # --- Write mesh ---
     o3d.io.write_triangle_mesh(str(mesh_path), mesh)
-    print(f"Wrote mesh: {mesh_path}")
+    print(f"Wrote mesh       : {mesh_path}")
 
-    # --- Visualise ---
     if not args.no_viz:
         o3d.visualization.draw_geometries([mesh])
 

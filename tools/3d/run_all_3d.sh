@@ -1,0 +1,362 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ============================================================================
+# run_all_3d.sh — One-command 3D pipeline runner for FluxSpace
+#
+# Runs:  reconstruct -> mag fusion -> voxelise -> viewer
+# Works on Mac and Pi.  No manual RUN_DIR export needed.
+#
+# Usage examples:
+#   ./tools/3d/run_all_3d.sh --new                          # fresh run
+#   ./tools/3d/run_all_3d.sh --latest                       # re-process newest run
+#   ./tools/3d/run_all_3d.sh --run data/runs/run_20260210_1430
+#   ./tools/3d/run_all_3d.sh --latest --no-viewer --verbose
+# ============================================================================
+
+# ── Colours (disabled when stdout isn't a terminal) ────────────────────────
+if [[ -t 1 ]]; then
+  _B='\033[1m'; _R='\033[0m'; _G='\033[32m'; _Y='\033[33m'; _RED='\033[31m'
+else
+  _B=''; _R=''; _G=''; _Y=''; _RED=''
+fi
+
+banner()  { printf "\n${_B}═══ %s${_R}\n" "$*"; }
+info()    { printf "${_G}✓${_R} %s\n" "$*"; }
+warn()    { printf "${_Y}⚠${_R} %s\n" "$*" >&2; }
+die()     { printf "${_RED}✗ ERROR:${_R} %s\n" "$*" >&2; exit 1; }
+
+# ── Defaults ───────────────────────────────────────────────────────────────
+RUN_DIR=""
+MODE=""                # run | latest | new
+REPO_ROOT=""
+NO_VIEWER=false
+VOXEL_SIZE="0.02"
+MAX_DIM="256"
+MAG_OVERRIDE=""
+OAK_OVERRIDE=""
+EXT_OVERRIDE=""
+DEFAULT_EXTRINSICS=""
+VERBOSE=false
+
+# ── Usage ──────────────────────────────────────────────────────────────────
+usage() {
+  cat <<'EOF'
+Usage: run_all_3d.sh <mode> [options]
+
+Modes (pick one):
+  --run <RUN_DIR>       Use an existing run directory
+  --latest              Use the newest data/runs/run_* directory
+  --new                 Create data/runs/run_YYYYMMDD_HHMM
+
+Options:
+  --repo-root <path>    Repository root (default: auto-detect from git)
+  --no-viewer           Skip the Open3D viewer at the end
+  --voxel-size <float>  Voxel edge length in metres (default: 0.02)
+  --max-dim <int>       Max voxels per axis (default: 256)
+  --mag <path>          Override magnetometer CSV (default: raw/mag_run.csv)
+  --oak <path>          Override OAK capture dir  (default: raw/oak_rgbd)
+  --extrinsics <path>   Override extrinsics JSON  (default: raw/extrinsics.json)
+  --default-extrinsics  Shorthand mount offset, e.g. "behind_cm=2,down_cm=10"
+  --verbose             Print full Python output (not just banners)
+  -h, --help            Show this help
+EOF
+}
+
+# ── Arg parsing ────────────────────────────────────────────────────────────
+[[ $# -eq 0 ]] && { usage; exit 1; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --run)
+      [[ -z "${2:-}" ]] && die "--run requires a directory path"
+      MODE="run"; RUN_DIR="$2"; shift 2 ;;
+    --latest)
+      MODE="latest"; shift ;;
+    --new)
+      MODE="new"; shift ;;
+    --repo-root)
+      [[ -z "${2:-}" ]] && die "--repo-root requires a path"
+      REPO_ROOT="$2"; shift 2 ;;
+    --no-viewer)
+      NO_VIEWER=true; shift ;;
+    --voxel-size)
+      [[ -z "${2:-}" ]] && die "--voxel-size requires a value"
+      VOXEL_SIZE="$2"; shift 2 ;;
+    --max-dim)
+      [[ -z "${2:-}" ]] && die "--max-dim requires a value"
+      MAX_DIM="$2"; shift 2 ;;
+    --mag)
+      [[ -z "${2:-}" ]] && die "--mag requires a path"
+      MAG_OVERRIDE="$2"; shift 2 ;;
+    --oak)
+      [[ -z "${2:-}" ]] && die "--oak requires a path"
+      OAK_OVERRIDE="$2"; shift 2 ;;
+    --extrinsics)
+      [[ -z "${2:-}" ]] && die "--extrinsics requires a path"
+      EXT_OVERRIDE="$2"; shift 2 ;;
+    --default-extrinsics)
+      [[ -z "${2:-}" ]] && die "--default-extrinsics requires a value like 'behind_cm=2,down_cm=10'"
+      DEFAULT_EXTRINSICS="$2"; shift 2 ;;
+    --verbose)
+      VERBOSE=true; shift ;;
+    -h|--help)
+      usage; exit 0 ;;
+    *)
+      die "Unknown option: $1   (run with --help)" ;;
+  esac
+done
+
+[[ -z "$MODE" ]] && die "Must specify one of --run, --latest, or --new."
+
+# ── Repo root ──────────────────────────────────────────────────────────────
+if [[ -n "$REPO_ROOT" ]]; then
+  REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
+else
+  # Auto-detect: walk up from this script
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+fi
+cd "$REPO_ROOT"
+
+# ── Python check ───────────────────────────────────────────────────────────
+if ! command -v python3 &>/dev/null; then
+  die "python3 not found. Activate your venv first:\n  source .venv/bin/activate   # Mac\n  source ~/fluxenv/bin/activate  # Pi"
+fi
+
+_py_check() {
+  python3 -c "import $1" 2>/dev/null && return 0
+  warn "Python module '$1' not importable."
+  printf "  Hint: activate your venv and install it:\n"
+  printf "    source .venv/bin/activate && pip install %s\n" "$2"
+  return 1
+}
+
+banner "Checking Python dependencies"
+_py_check numpy   numpy
+_py_check pandas  pandas
+_py_check open3d  open3d  || die "open3d is required for reconstruction + viewer."
+_py_check scipy   scipy   || warn "scipy missing — IDW interpolation will fail; scatter method still works."
+info "Core dependencies OK"
+
+# ── Run directory selection ────────────────────────────────────────────────
+banner "Selecting run directory"
+
+case "$MODE" in
+  run)
+    # Resolve to absolute (handles relative, USB paths, ~, etc.)
+    RUN_DIR="$(cd "$REPO_ROOT" && python3 -c "from pathlib import Path; print(Path('$RUN_DIR').expanduser().resolve())")"
+    [[ -d "$RUN_DIR" ]] || die "Run directory not found: $RUN_DIR"
+    ;;
+  latest)
+    RUNS_BASE="$REPO_ROOT/data/runs"
+    [[ -d "$RUNS_BASE" ]] || die "No data/runs/ directory found in $REPO_ROOT"
+    RUN_DIR="$(ls -1d "$RUNS_BASE"/run_* 2>/dev/null | sort | tail -n1)" || true
+    [[ -n "$RUN_DIR" && -d "$RUN_DIR" ]] || die "No run_* directories found under $RUNS_BASE"
+    ;;
+  new)
+    STAMP="$(date +%Y%m%d_%H%M)"
+    RUN_DIR="$REPO_ROOT/data/runs/run_${STAMP}"
+    mkdir -p "$RUN_DIR"/{raw,processed,exports}
+    info "Created new run directory"
+    ;;
+esac
+
+info "RUN_DIR = $RUN_DIR"
+
+# ── Resolve input paths ───────────────────────────────────────────────────
+OAK_DIR="${OAK_OVERRIDE:-$RUN_DIR/raw/oak_rgbd}"
+MAG_CSV="${MAG_OVERRIDE:-$RUN_DIR/raw/mag_run.csv}"
+EXT_JSON="${EXT_OVERRIDE:-$RUN_DIR/raw/extrinsics.json}"
+
+# ── Ensure canonical directories ──────────────────────────────────────────
+mkdir -p "$RUN_DIR"/{raw,processed,exports}
+
+# ── Validation ─────────────────────────────────────────────────────────────
+banner "Validating inputs"
+
+FAIL=false
+
+_require_dir() {
+  if [[ ! -d "$1" ]]; then
+    printf "${_RED}✗${_R} Missing directory: %s\n" "$1" >&2
+    FAIL=true
+  else
+    info "Found: $1"
+  fi
+}
+
+_require_file() {
+  if [[ ! -f "$1" ]]; then
+    printf "${_RED}✗${_R} Missing file: %s\n" "$1" >&2
+    FAIL=true
+  else
+    info "Found: $1"
+  fi
+}
+
+_require_dir  "$OAK_DIR/color"
+_require_dir  "$OAK_DIR/depth"
+_require_file "$OAK_DIR/timestamps.csv"
+
+if [[ ! -f "$OAK_DIR/intrinsics.json" ]]; then
+  warn "intrinsics.json not found in $OAK_DIR — reconstruction will use approximate values"
+else
+  info "Found: $OAK_DIR/intrinsics.json"
+fi
+
+if [[ ! -f "$MAG_CSV" ]]; then
+  printf "${_RED}✗${_R} Missing mag file: %s\n" "$MAG_CSV" >&2
+  FAIL=true
+else
+  info "Found: $MAG_CSV"
+fi
+
+if [[ ! -f "$RUN_DIR/raw/calibration.json" ]]; then
+  warn "calibration.json not found — not critical, continuing"
+else
+  info "Found: $RUN_DIR/raw/calibration.json"
+fi
+
+if [[ ! -f "$EXT_JSON" ]]; then
+  if [[ -n "$DEFAULT_EXTRINSICS" ]]; then
+    info "No extrinsics.json — will use --default-extrinsics \"$DEFAULT_EXTRINSICS\""
+  else
+    warn "extrinsics.json not found — fusion will use identity offset (mag at camera centre)"
+  fi
+else
+  info "Found: $EXT_JSON"
+fi
+
+$FAIL && die "Required input files missing (see above). Place raw data in $RUN_DIR/raw/ and re-run."
+
+# Count frames for the user
+N_COLOR="$(ls -1 "$OAK_DIR/color/"*.jpg 2>/dev/null | wc -l | tr -d ' ')"
+N_DEPTH="$(ls -1 "$OAK_DIR/depth/"*.png 2>/dev/null | wc -l | tr -d ' ')"
+info "$N_COLOR colour frames, $N_DEPTH depth frames"
+[[ "$N_COLOR" -eq 0 ]] && die "No .jpg files in $OAK_DIR/color/ — capture may have failed."
+[[ "$N_COLOR" -ne "$N_DEPTH" ]] && die "Colour/depth frame count mismatch ($N_COLOR vs $N_DEPTH)."
+
+# ── Helper: run a Python step ─────────────────────────────────────────────
+STEP_NUM=0
+run_step() {
+  local label="$1"; shift
+  STEP_NUM=$((STEP_NUM + 1))
+  banner "Step $STEP_NUM: $label"
+
+  if $VERBOSE; then
+    "$@"
+  else
+    local LOG
+    LOG="$(mktemp)"
+    if ! "$@" > "$LOG" 2>&1; then
+      cat "$LOG" >&2
+      rm -f "$LOG"
+      die "Step $STEP_NUM ($label) FAILED. See output above."
+    fi
+    # Show last few lines as a digest
+    tail -n 6 "$LOG"
+    rm -f "$LOG"
+  fi
+  info "$label — done"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 1: Open3D reconstruction → processed/trajectory.csv + open3d_mesh.ply
+# ═══════════════════════════════════════════════════════════════════════════
+run_step "Open3D reconstruction" \
+  python3 pipelines/3d/open3d_reconstruct.py \
+    --in "$OAK_DIR" \
+    --out-dir "$RUN_DIR/processed" \
+    --no-viz
+
+[[ -f "$RUN_DIR/processed/trajectory.csv" ]] \
+  || die "Reconstruction finished but trajectory.csv was not created."
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 2: Fuse magnetometer with trajectory → processed/mag_world.csv
+# ═══════════════════════════════════════════════════════════════════════════
+FUSE_ARGS=(
+  python3 pipelines/3d/fuse_mag_with_trajectory.py
+  --trajectory "$RUN_DIR/processed/trajectory.csv"
+  --mag        "$MAG_CSV"
+  --out        "$RUN_DIR/processed/mag_world.csv"
+  --value-type zero_mag
+)
+
+# Extrinsics: CLI shorthand takes priority, then file, then implicit default
+if [[ -n "$DEFAULT_EXTRINSICS" ]]; then
+  FUSE_ARGS+=(--default-extrinsics "$DEFAULT_EXTRINSICS")
+elif [[ -f "$EXT_JSON" ]]; then
+  FUSE_ARGS+=(--extrinsics "$EXT_JSON")
+fi
+# If neither is supplied the Python script will warn and use identity — that's fine.
+
+run_step "Fuse mag with trajectory" "${FUSE_ARGS[@]}"
+
+[[ -f "$RUN_DIR/processed/mag_world.csv" ]] \
+  || die "Fusion finished but mag_world.csv was not created."
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 3: Voxel volume → exports/volume.npz
+# ═══════════════════════════════════════════════════════════════════════════
+# Use mag_world_m.csv if the auto-scaler produced it and the original is absent
+MAG_WORLD="$RUN_DIR/processed/mag_world.csv"
+if [[ ! -f "$MAG_WORLD" && -f "$RUN_DIR/processed/mag_world_m.csv" ]]; then
+  MAG_WORLD="$RUN_DIR/processed/mag_world_m.csv"
+  warn "Using auto-scaled mag_world_m.csv"
+fi
+
+run_step "Voxel volume" \
+  python3 pipelines/3d/mag_world_to_voxel_volume.py \
+    --in       "$MAG_WORLD" \
+    --out      "$RUN_DIR/exports/volume.npz" \
+    --voxel-size "$VOXEL_SIZE" \
+    --max-dim    "$MAX_DIM"
+
+[[ -f "$RUN_DIR/exports/volume.npz" ]] \
+  || die "Voxelisation finished but volume.npz was not created."
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 4: Viewer (optional)
+# ═══════════════════════════════════════════════════════════════════════════
+if ! $NO_VIEWER; then
+  banner "Step 4: Launching viewer"
+  echo "  Close the viewer window when done to see the final summary."
+  python3 pipelines/3d/view_scan_toggle.py \
+    --run "$RUN_DIR" \
+    --title "FluxSpace — $(basename "$RUN_DIR")"
+  info "Viewer closed"
+else
+  info "Viewer skipped (--no-viewer)"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Summary
+# ═══════════════════════════════════════════════════════════════════════════
+_rel() {
+  # Print path relative to repo root if possible, else absolute
+  python3 -c "
+from pathlib import Path
+try: print(Path('$1').relative_to('$REPO_ROOT'))
+except ValueError: print('$1')
+" 2>/dev/null || echo "$1"
+}
+
+MAG_OUT="$RUN_DIR/processed/mag_world.csv"
+[[ -f "$RUN_DIR/processed/mag_world_m.csv" ]] && MAG_OUT="$RUN_DIR/processed/mag_world_m.csv (scaled)"
+
+printf "\n"
+printf "${_G}════════════════════════════════════════${_R}\n"
+printf "${_G}  Done — all 3D pipeline steps complete ${_R}\n"
+printf "${_G}════════════════════════════════════════${_R}\n"
+printf "\n"
+printf "  RUN_DIR     : %s\n" "$(_rel "$RUN_DIR")"
+printf "  Mesh        : %s\n" "$(_rel "$RUN_DIR/processed/open3d_mesh.ply")"
+printf "  Trajectory  : %s\n" "$(_rel "$RUN_DIR/processed/trajectory.csv")"
+printf "  Mag world   : %s\n" "$(_rel "$MAG_OUT")"
+printf "  Volume      : %s\n" "$(_rel "$RUN_DIR/exports/volume.npz")"
+printf "\n"
+printf "  Re-open viewer:\n"
+printf "    python3 pipelines/3d/view_scan_toggle.py --run \"%s\"\n" "$(_rel "$RUN_DIR")"
+printf "\n"

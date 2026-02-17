@@ -126,39 +126,42 @@ head -2 "$RUN_DIR/raw/mag_run.csv"
 | `intrinsics.json` | `"source": "oak_calibration"` (not `"approximate"`) |
 | `mag_run.csv` | Thousands of rows; header includes `t_rel_s, bx, by, bz` |
 
-### Create extrinsics (first time only, then reuse)
+### Create extrinsics (optional — skips with warning if missing)
 
 ```bash
-printf '%s\n' '{ "translation_m": [0.30, 0.0, 0.0], "rotation_quat_xyzw": null }' \
+# Option A: JSON file (reuse across runs)
+printf '%s\n' '{ "translation_m": [0.30, 0.0, 0.0], "quaternion_xyzw": [0, 0, 0, 1] }' \
   > "$RUN_DIR/raw/extrinsics.json"
 # ^ Adjust 0.30 to your actual ruler offset in metres
+
+# Option B: Inline CLI shorthand (no file needed)
+# Use --default-extrinsics "behind_cm=2,down_cm=10" in the fuse command
+# (camera frame: +x right, +y down, +z forward)
 ```
 
 ### Process (when ready)
 
 ```bash
-# Reconstruct -> trajectory.csv + mesh
+# Reconstruct -> processed/trajectory.csv + processed/open3d_mesh.ply
 python3 pipelines/3d/open3d_reconstruct.py \
   --in "$RUN_DIR/raw/oak_rgbd" --no-viz
 
-# Fuse mag with trajectory
+# Fuse mag with trajectory (--run auto-derives all paths)
+# Extrinsics: uses raw/extrinsics.json if present, else identity (warns)
 python3 pipelines/3d/fuse_mag_with_trajectory.py \
-  --trajectory "$RUN_DIR/processed/trajectory.csv" \
-  --mag "$RUN_DIR/raw/mag_run.csv" \
-  --extrinsics "$RUN_DIR/raw/extrinsics.json" \
-  --out "$RUN_DIR/processed/mag_world.csv" \
+  --run "$RUN_DIR" \
   --value-type zero_mag
+# Or for a known mount offset without extrinsics.json:
+#   --default-extrinsics "behind_cm=2,down_cm=10"
 
-# Voxel volume
+# Voxel volume (auto-scales mm->m, clamps grid to max 256 voxels/axis)
 python3 pipelines/3d/mag_world_to_voxel_volume.py \
   --in "$RUN_DIR/processed/mag_world.csv" \
   --out "$RUN_DIR/exports/volume.npz" \
-  --voxel-size 0.02 --margin 0.1
+  --voxel-size 0.02
 
-# Visualise
-python3 pipelines/3d/visualize_3d_heatmap.py \
-  --in "$RUN_DIR/exports/volume.npz" \
-  --out-dir "$RUN_DIR/exports" --screenshot
+# Visualise (interactive viewer with toggles)
+python3 pipelines/3d/view_scan_toggle.py --run "$RUN_DIR"
 ```
 
 ---

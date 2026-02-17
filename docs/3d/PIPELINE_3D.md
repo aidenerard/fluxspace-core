@@ -34,7 +34,52 @@ This additionally installs `depthai`, `opencv-python`, `open3d`, and the `libusb
 
 ---
 
-## Quickstart (minimal first run)
+## One-command run (OAK-D workflow)
+
+If your raw data is already captured (OAK frames + mag CSV in a run folder), the entire processing pipeline is a single command:
+
+```bash
+# Process a new capture end-to-end (reconstruct + fuse + voxelise + viewer):
+./tools/3d/run_all_3d.sh --run data/runs/run_20260210_1430
+
+# Re-process the most recent run:
+./tools/3d/run_all_3d.sh --latest
+
+# Create a fresh run folder (then copy raw data in):
+./tools/3d/run_all_3d.sh --new
+```
+
+**Common options:**
+
+```bash
+# Skip the Open3D viewer (headless / CI):
+./tools/3d/run_all_3d.sh --latest --no-viewer
+
+# Use a known mount offset instead of extrinsics.json:
+./tools/3d/run_all_3d.sh --latest --default-extrinsics "behind_cm=2,down_cm=10"
+
+# Coarser voxels for speed:
+./tools/3d/run_all_3d.sh --latest --voxel-size 0.04 --max-dim 128
+```
+
+**Re-open the viewer** after the pipeline has run:
+
+```bash
+python3 pipelines/3d/view_scan_toggle.py --run data/runs/run_20260210_1430
+```
+
+The script validates inputs, prints progress banners, and ends with a summary of every output file. Run `./tools/3d/run_all_3d.sh --help` for all flags.
+
+**Copying raw data from USB:**  
+If your capture was saved on a USB drive (e.g. `/Volumes/FLUXSPACE/...`), copy the `oak_rgbd/` folder and `mag_run.csv` into `$RUN_DIR/raw/` before running. Or point at the USB path directly:
+
+```bash
+./tools/3d/run_all_3d.sh --run /Volumes/FLUXSPACE/data/runs/run_20260210_1430
+```
+
+---
+
+## Quickstart (step-by-step, all workflows)
 
 ```bash
 # 1. Create run folder
@@ -56,29 +101,24 @@ python3 pipelines/3d/polycam_raw_to_trajectory.py --in "$RUN_DIR/raw/PolycamRawE
 # python3 pipelines/3d/capture_oak_rgbd.py --out "$RUN_DIR/raw/oak_rgbd"
 # python3 pipelines/3d/open3d_reconstruct.py --in "$RUN_DIR/raw/oak_rgbd" --no-viz
 
-# 5. Fuse magnetometer with trajectory
+# 5. Fuse magnetometer with trajectory (--run auto-derives all paths)
 python3 pipelines/3d/fuse_mag_with_trajectory.py \
-  --trajectory "$RUN_DIR/processed/trajectory.csv" \
-  --mag "$RUN_DIR/raw/mag_run.csv" \
-  --extrinsics "$RUN_DIR/raw/extrinsics.json" \
-  --out "$RUN_DIR/processed/mag_world.csv" \
+  --run "$RUN_DIR" \
   --value-type zero_mag
+# Extrinsics: uses $RUN_DIR/raw/extrinsics.json if it exists, else identity (warns).
+# Or use --default-extrinsics "behind_cm=2,down_cm=10" for a quick mount offset.
 
-# 6. Voxel volume
+# 6. Voxel volume (auto-scales mm->m if needed, clamps grid to --max-dim 256)
 python3 pipelines/3d/mag_world_to_voxel_volume.py \
   --in "$RUN_DIR/processed/mag_world.csv" \
   --out "$RUN_DIR/exports/volume.npz" \
-  --voxel-size 0.02 \
-  --margin 0.1
+  --voxel-size 0.02
 
-# 7. Visualise
-python3 pipelines/3d/visualize_3d_heatmap.py \
-  --in "$RUN_DIR/exports/volume.npz" \
-  --out-dir "$RUN_DIR/exports" \
-  --screenshot
+# 7. Visualise (interactive viewer with mesh + heatmap)
+python3 pipelines/3d/view_scan_toggle.py --run "$RUN_DIR"
 ```
 
-(Use `--volume` as an alias for `--in` if you prefer.) Expected outputs: `trajectory.csv`, `mag_world.csv`, `volume.npz`, and `exports/heatmap_3d_screenshot.png`. If using OAK-D, also `open3d_mesh.ply`.
+Expected outputs: `processed/trajectory.csv`, `processed/mag_world.csv`, `exports/volume.npz`. If using OAK-D, also `processed/open3d_mesh.ply`.
 
 ---
 
@@ -156,23 +196,25 @@ Use one folder per capture session. All commands below assume either:
 data/runs/run_20250123_1430/
 ├── raw/
 │   ├── mag_run.csv              # From mag_to_csv_v2.py or mag_calibrate_zero_logger.py
-│   ├── extrinsics.json           # Ruler rig: translation (and optional rotation) camera -> mag
-│   ├── PolycamRawExport/         # Option A: Polycam Raw Data export folder
+│   ├── calibration.json         # Magnetometer calibration (optional)
+│   ├── extrinsics.json          # Ruler rig: camera -> mag offset (optional, identity if missing)
+│   ├── PolycamRawExport/        # Option A: Polycam Raw Data export folder
 │   │   └── (cameras.json or corrected_cameras, etc.)
-│   ├── rtabmap_poses.txt         # Option A: RTAB-Map "Export poses" (TUM format)
-│   └── oak_rgbd/                 # Option B: OAK-D capture (from capture_oak_rgbd.py --out)
+│   ├── rtabmap_poses.txt        # Option A: RTAB-Map "Export poses" (TUM format)
+│   └── oak_rgbd/                # Option B: OAK-D capture (from capture_oak_rgbd.py --out)
 │       ├── color/color_*.jpg
-│       ├── depth/depth_*.png     # 16-bit depth in mm
-│       ├── timestamps.csv        # idx, t_wall_s, t_device_ms
-│       └── intrinsics.json       # fx, fy, cx, cy (from OAK-D calibration)
+│       ├── depth/depth_*.png    # 16-bit depth in mm
+│       ├── timestamps.csv       # idx, t_wall_s, t_rgb_dev_ms, t_depth_dev_ms
+│       └── intrinsics.json      # fx, fy, cx, cy (from OAK-D calibration)
 ├── processed/
-│   ├── trajectory.csv            # t_rel_s, x, y, z, qx, qy, qz, qw
-│   │                             # (from polycam / rtabmap / open3d_reconstruct)
-│   └── mag_world.csv             # t_rel_s, x, y, z, value, value_type
+│   ├── trajectory.csv           # t_rel_s, x, y, z, qx, qy, qz, qw
+│   ├── open3d_mesh.ply          # Coloured triangle mesh (from open3d_reconstruct)
+│   ├── mag_world.csv            # t_rel_s, x, y, z, value, value_type
+│   └── mag_world_m.csv          # Scaled copy if auto-scale detected mm units
 └── exports/
-    ├── volume.npz                # 3D voxel grid + origin, voxel_size, axes
+    ├── volume.npz               # 3D voxel grid (float32) + origin, voxel_size
     ├── heatmap_3d_screenshot.png
-    └── (optional) open3d_mesh.ply, heatmap_3d.html
+    └── (optional) viewer_screenshot.png, heatmap_3d.html
 ```
 
 ---
@@ -284,31 +326,28 @@ mkdir -p "$RUN_DIR"/{raw,processed,exports}
 python3 pipelines/3d/capture_oak_rgbd.py --out "$RUN_DIR/raw/oak_rgbd"
 #   -> $RUN_DIR/raw/oak_rgbd/color/  depth/  timestamps.csv  intrinsics.json
 
-# 3. Reconstruct -> trajectory.csv + mesh
-#    (auto-detects $RUN_DIR/processed/ and $RUN_DIR/exports/ from the input path)
+# 3. Reconstruct -> trajectory.csv + mesh (both written to processed/)
 python3 pipelines/3d/open3d_reconstruct.py \
   --in "$RUN_DIR/raw/oak_rgbd" \
   --no-viz
 #   -> $RUN_DIR/processed/trajectory.csv
-#   -> $RUN_DIR/exports/open3d_mesh.ply
+#   -> $RUN_DIR/processed/open3d_mesh.ply
 
-# 4. (If using magnetometer) Fuse mag with the new trajectory — same as Option A
+# 4. (If using magnetometer) Fuse mag with the new trajectory
+#    Uses --run to auto-derive all paths; extrinsics are optional (warns if missing)
 python3 pipelines/3d/fuse_mag_with_trajectory.py \
-  --trajectory "$RUN_DIR/processed/trajectory.csv" \
-  --mag "$RUN_DIR/raw/mag_run.csv" \
-  --extrinsics "$RUN_DIR/raw/extrinsics.json" \
-  --out "$RUN_DIR/processed/mag_world.csv" \
+  --run "$RUN_DIR" \
   --value-type zero_mag
+#   -> $RUN_DIR/processed/mag_world.csv
 
-# 5. Voxel volume + visualise (unchanged from Option A)
+# 5. Voxel volume (auto-detects units; clamps grid to --max-dim 256)
 python3 pipelines/3d/mag_world_to_voxel_volume.py \
   --in "$RUN_DIR/processed/mag_world.csv" \
   --out "$RUN_DIR/exports/volume.npz"
+#   -> $RUN_DIR/exports/volume.npz
 
-python3 pipelines/3d/visualize_3d_heatmap.py \
-  --in "$RUN_DIR/exports/volume.npz" \
-  --out-dir "$RUN_DIR/exports" \
-  --screenshot
+# 6. Visualise (interactive viewer with mesh + heatmap)
+python3 pipelines/3d/view_scan_toggle.py --run "$RUN_DIR"
 ```
 
 Steps 4–5 are **identical** to the Polycam / RTAB-Map workflow — the OAK-D scripts just replace the capture and trajectory-extraction steps.
@@ -317,8 +356,8 @@ Steps 4–5 are **identical** to the Polycam / RTAB-Map workflow — the OAK-D s
 
 | Script | Reads | Writes |
 |--------|-------|--------|
-| `capture_oak_rgbd.py` | OAK-D sensor (USB) | `color/`, `depth/`, `timestamps.csv`, `intrinsics.json` |
-| `open3d_reconstruct.py` | colour + depth frames | `trajectory.csv` (t_rel_s, x, y, z, qx, qy, qz, qw), `open3d_mesh.ply` |
+| `capture_oak_rgbd.py` | OAK-D sensor (USB) | `raw/oak_rgbd/`: `color/`, `depth/`, `timestamps.csv`, `intrinsics.json` |
+| `open3d_reconstruct.py` | `raw/oak_rgbd/` frames | `processed/trajectory.csv`, `processed/open3d_mesh.ply` |
 
 ### CLI flags
 
@@ -333,9 +372,10 @@ Steps 4–5 are **identical** to the Polycam / RTAB-Map workflow — the OAK-D s
 
 | Flag | Description |
 |------|-------------|
-| `--in DIR` | Input directory (from capture). Default: `oak_capture`. |
-| `--out PATH` | Trajectory CSV output. Default: auto-detect (`$RUN_DIR/processed/trajectory.csv` or `<in>/trajectory.csv`). |
-| `--mesh PATH` | Mesh PLY output. Default: auto-detect (`$RUN_DIR/exports/open3d_mesh.ply` or `<in>/open3d_mesh.ply`). |
+| `--in DIR` | Input directory (from capture). Required. |
+| `--out-dir DIR` | Output directory for trajectory + mesh. Default: auto-detect `$RUN_DIR/processed/` from `--in`. |
+| `--out PATH` | Override: explicit trajectory.csv path. |
+| `--mesh PATH` | Override: explicit mesh PLY path. |
 | `--voxel-size M` | TSDF voxel size in metres. Default: 0.01. |
 | `--no-viz` | Skip Open3D interactive viewer (headless / CI). |
 
@@ -386,16 +426,20 @@ Output: same columns, `t_rel_s` normalized from first pose.
 ```bash
 python3 pipelines/3d/open3d_reconstruct.py \
   --in "$RUN_DIR/raw/oak_rgbd" \
-  --out "$RUN_DIR/processed/trajectory.csv" \
-  --mesh "$RUN_DIR/exports/open3d_mesh.ply" \
   --no-viz
 ```
 
-Output: same `trajectory.csv` columns (from frame-to-frame odometry) + `open3d_mesh.ply` in exports. See the [OAK-D section](#oak-d-lite-capture--open3d-reconstruction-option-b) above for the full workflow.
+Output: `processed/trajectory.csv` (same columns as other options) + `processed/open3d_mesh.ply`. The `--out-dir` is auto-detected from `--in` path. See the [OAK-D section](#oak-d-lite-capture--open3d-reconstruction-option-b) above for the full workflow.
 
 ### Step 2: Fuse magnetometer with trajectory
 
 ```bash
+# Simplest (auto-derives paths from RUN_DIR):
+python3 pipelines/3d/fuse_mag_with_trajectory.py \
+  --run "$RUN_DIR" \
+  --value-type zero_mag
+
+# Explicit paths (equivalent):
 python3 pipelines/3d/fuse_mag_with_trajectory.py \
   --trajectory "$RUN_DIR/processed/trajectory.csv" \
   --mag "$RUN_DIR/raw/mag_run.csv" \
@@ -405,24 +449,30 @@ python3 pipelines/3d/fuse_mag_with_trajectory.py \
   --interpolate
 ```
 
-- **Time alignment:** Nearest-neighbor by default; `--interpolate` uses linear interpolation of pose at each mag timestamp.
-- **Extrinsics:** Translation (and optional quaternion rotation) from phone/camera frame to magnetometer frame; applied to pose position (and optionally field vector if rotation present).
+- **`--run`:** Derives trajectory, mag, extrinsics, and output paths from the run folder.
+- **Extrinsics:** Supports multiple JSON schemas (`translation_m`, `translation_cm`, short-form `t`/`q`). If `extrinsics.json` is missing, defaults to identity and warns loudly.
+- **`--default-extrinsics`:** Shorthand for mount offset, e.g. `"behind_cm=2,down_cm=10"` (camera frame: +x right, +y down, +z forward).
+- **Time alignment:** Nearest-neighbor by default; `--interpolate` for linear interpolation.
 - **value_type:** `zero_mag` (baseline-subtracted magnitude), or `raw` / `corr` if your mag CSV has those columns.
 
 Expected output: `mag_world.csv` with columns `t_rel_s, x, y, z, value, value_type`.
 
 ### Step 3: Voxel volume
 
-**Option A — IDW (original):**
+**Option A — IDW (default):**
 
 ```bash
 python3 pipelines/3d/mag_world_to_voxel_volume.py \
   --in "$RUN_DIR/processed/mag_world.csv" \
   --out "$RUN_DIR/exports/volume.npz" \
   --voxel-size 0.02 \
-  --margin 0.1 \
   --method idw
 ```
+
+- **`--auto-scale`** (on by default): if coordinate ranges exceed ~10 m, assumes mm units and multiplies by 0.001. Saves a scaled copy to `processed/mag_world_m.csv`.
+- **`--max-dim 256`** (default): clamps each grid axis to 256 voxels. If the grid would exceed this, voxel size is automatically increased (printed).
+- **`--method scatter`**: fast alternative — bins points directly into voxels (no IDW, no meshgrid). Good for quick previews.
+- Volume is always **float32** — never allocates a float64 meshgrid.
 
 **Option B — IDW or GPR + gradient (single volume.npz):**
 
@@ -558,10 +608,10 @@ If a script needs a missing dependency, it will print a clear error and the pack
 |------|--------|-------------------|
 | OAK-D capture | `raw/oak_rgbd/` | `color/`, `depth/`, `timestamps.csv`, `intrinsics.json` |
 | Trajectory (any source) | `processed/trajectory.csv` | `t_rel_s, x, y, z, qx, qy, qz, qw` |
-| Open3D mesh (OAK-D only) | `exports/open3d_mesh.ply` | Coloured triangle mesh (PLY) |
+| Open3D mesh (OAK-D only) | `processed/open3d_mesh.ply` | Coloured triangle mesh (PLY) |
 | Fuse | `processed/mag_world.csv` | `t_rel_s, x, y, z, value, value_type` |
-| Voxel | `exports/volume.npz` | 3D array + `origin`, `voxel_size`, axis arrays |
-| Viz | `exports/heatmap_3d_screenshot.png` | Slice + isosurface view; optional HTML |
+| Voxel | `exports/volume.npz` | 3D float32 array + `origin`, `voxel_size`, `value_min`, `value_max` |
+| Viewer | `view_scan_toggle.py --run` | Interactive mesh + heatmap viewer |
 
 All scripts use **argparse**, **clear prints** of inputs/outputs, and write into the **run folder**; defaults are set for reproducible runs.
 
@@ -583,6 +633,10 @@ Detailed docs for each 3D pipeline script:
 | `fuse_mag_with_trajectory` | [fuse_mag_with_trajectory_explanation.md](fuse_mag_with_trajectory_explanation.md) |
 | `mag_world_to_voxel_volume` | [mag_world_to_voxel_volume_explanation.md](mag_world_to_voxel_volume_explanation.md) |
 | `visualize_3d_heatmap` | [visualize_3d_heatmap_explanation.md](visualize_3d_heatmap_explanation.md) |
+| `view_scan_toggle` | Interactive mesh + heatmap viewer (Open3D GUI) |
+| `run_paths` | Shared helper module for resolving run-folder paths |
+| **Shell tools** | |
+| `run_all_3d.sh` | One-command pipeline runner (`./tools/3d/run_all_3d.sh --help`) |
 | `mag_calibrate_zero_logger` | [mag_calibrate_zero_logger_explanation.md](mag_calibrate_zero_logger_explanation.md) |
 | `mag_to_csv_v2` (2D, used for 3D capture) | [mag_to_csv_v2_explanation.md](mag_to_csv_v2_explanation.md) |
 | **GPR (optional)** | |
