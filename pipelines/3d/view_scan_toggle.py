@@ -1,239 +1,378 @@
 #!/usr/bin/env python3
+"""
+FluxSpace Viewer (Mesh + Heatmap)
+- Loads:
+  - processed/open3d_mesh.ply (surface mesh)
+  - exports/volume.npz        (voxel grid heat volume)
+- UI:
+  - Toggle mesh
+  - Toggle heatmap
+  - Threshold slider (keeps voxels with value >= threshold)
+  - Opacity slider
+  - Reframe button (robust percentile bbox to avoid "tiny dot" view)
+
+Run:
+  python3 pipelines/3d/view_scan_toggle.py --run "$RUN_DIR"
+
+Notes:
+- This viewer intentionally uses a ROBUST bounding box (percentile clamp)
+  to avoid outliers making the view useless.
+"""
+
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 import numpy as np
-import open3d as o3d
 
-# Open3D GUI (works on macOS if Open3D installed correctly)
+import open3d as o3d
 import open3d.visualization.gui as gui
 import open3d.visualization.rendering as rendering
 
 
-def load_volume_npz(npz_path: Path):
-    d = np.load(npz_path, allow_pickle=True)
-    # Expecting keys like: volume/value/grid/origin/voxel_size (your script prints these)
-    # We'll be defensive:
-    keys = set(d.files)
-
-    # Common patterns
-    if "volume" in keys:
-        V = d["volume"]
-    elif "value" in keys:
-        V = d["value"]
-    else:
-        # fallback: first array
-        V = d[d.files[0]]
-
-    origin = d["origin"] if "origin" in keys else np.array([0.0, 0.0, 0.0])
-    voxel_size = float(d["voxel_size"]) if "voxel_size" in keys else 0.02
-
-    return V, origin.astype(float), voxel_size
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--run", required=True, help="Run directory, e.g. data/runs/run_YYYYMMDD_HHMM")
+    p.add_argument("--mesh", default="processed/open3d_mesh.ply", help="Path relative to run dir")
+    p.add_argument("--volume", default="exports/volume.npz", help="Path relative to run dir")
+    p.add_argument("--title", default="FluxSpace Viewer (Mesh + Heatmap)")
+    p.add_argument("--percentile-lo", type=float, default=1.0, help="robust bbox low percentile")
+    p.add_argument("--percentile-hi", type=float, default=99.0, help="robust bbox high percentile")
+    return p.parse_args()
 
 
-def make_heatmap_pointcloud(V, origin, voxel_size, thresh, max_points=400_000):
+def robust_bbox_from_points(pts_np: np.ndarray, lo=1.0, hi=99.0) -> o3d.geometry.AxisAlignedBoundingBox:
     """
-    Turn voxels with V >= thresh into a colored point cloud at voxel centers.
+    Returns a robust AABB based on percentile clamping (good against outliers).
     """
-    idx = np.argwhere(V >= thresh)
-    if idx.shape[0] == 0:
-        return o3d.geometry.PointCloud()
+    if pts_np is None or pts_np.size == 0:
+        return o3d.geometry.AxisAlignedBoundingBox(np.array([-1, -1, -1]), np.array([1, 1, 1]))
 
-    # Downsample if huge
-    if idx.shape[0] > max_points:
-        step = int(np.ceil(idx.shape[0] / max_points))
-        idx = idx[::step]
+    pts = np.asarray(pts_np, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 3:
+        raise ValueError(f"Expected Nx3 points, got {pts.shape}")
 
-    # voxel center positions in world coordinates
-    pts = origin + (idx + 0.5) * voxel_size
+    p_lo = np.percentile(pts, lo, axis=0)
+    p_hi = np.percentile(pts, hi, axis=0)
 
-    vals = V[idx[:, 0], idx[:, 1], idx[:, 2]].astype(np.float32)
-    vmin, vmax = float(np.min(vals)), float(np.max(vals))
-    denom = (vmax - vmin) if (vmax - vmin) > 1e-9 else 1.0
-    t = (vals - vmin) / denom
-
-    # simple colormap (blue->green->yellow-ish)
-    # (No matplotlib dependency)
-    colors = np.stack([
-        np.clip(1.5 * (t - 0.5), 0, 1),          # R
-        np.clip(1.5 * (1 - np.abs(t - 0.5)), 0, 1),  # G
-        np.clip(1.5 * (0.5 - t), 0, 1)           # B
-    ], axis=1).astype(np.float32)
-
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(pts.astype(np.float64))
-    pcd.colors = o3d.utility.Vector3dVector(colors.astype(np.float64))
-    return pcd
+    # padding proportional to bbox diagonal
+    diag = np.linalg.norm(p_hi - p_lo)
+    pad = 0.02 * diag + 1e-6
+    return o3d.geometry.AxisAlignedBoundingBox(p_lo - pad, p_hi + pad)
 
 
-class App:
-    def __init__(self, mesh_path: Path, volume_path: Path):
-        self.mesh_path = mesh_path
-        self.volume_path = volume_path
+def load_volume_npz(path: Path):
+    d = np.load(str(path), allow_pickle=True)
+    keys = list(d.files)
 
-        self.mesh = None
-        self.V = None
-        self.origin = None
-        self.voxel_size = None
+    # Try common key names
+    vol_key = None
+    for k in ("volume", "V", "grid", "values"):
+        if k in keys:
+            vol_key = k
+            break
+    if vol_key is None:
+        # fall back to first key
+        vol_key = keys[0]
 
+    V = d[vol_key]
+
+    origin = None
+    voxel_size = None
+
+    if "origin" in keys:
+        origin = np.array(d["origin"], dtype=np.float64).reshape(3)
+    elif "origin_m" in keys:
+        origin = np.array(d["origin_m"], dtype=np.float64).reshape(3)
+
+    if "voxel_size" in keys:
+        voxel_size = float(d["voxel_size"])
+    elif "voxel_size_m" in keys:
+        voxel_size = float(d["voxel_size_m"])
+    elif "vs" in keys:
+        voxel_size = float(d["vs"])
+
+    if origin is None or voxel_size is None:
+        raise ValueError(
+            f"{path.name} missing required fields. Found keys={keys}. "
+            "Need 'origin' (3,) and 'voxel_size' (float) plus a volume array."
+        )
+
+    return V, origin, voxel_size, keys
+
+
+class FluxSpaceViewer:
+    def __init__(
+        self,
+        run_dir: Path,
+        mesh_rel: str,
+        volume_rel: str,
+        title: str,
+        pct_lo: float,
+        pct_hi: float,
+    ):
+        self.run_dir = run_dir
+        self.mesh_path = run_dir / mesh_rel
+        self.vol_path = run_dir / volume_rel
+        self.title = title
+        self.pct_lo = pct_lo
+        self.pct_hi = pct_hi
+
+        # State
         self.mesh_visible = True
         self.heat_visible = True
-        self.alpha = 0.35
+        self.default_thresh = None  # set after loading volume
+        self.heat_threshold = None
+        self.heat_opacity = 0.35
 
-        self._load_data()
+        # Geometry
+        self.mesh = None  # TriangleMesh
+        self.V = None  # 3D numpy array
+        self.origin = None  # (3,)
+        self.voxel_size = None  # float
+        self.heat_geom = None  # PointCloud
 
-        gui.Application.instance.initialize()
-        self.window = gui.Application.instance.create_window("FluxSpace Viewer (Mesh + Heatmap)", 1280, 800)
+        # Render names
+        self.MESH_NAME = "surface_mesh"
+        self.HEAT_NAME = "heatmap_voxels"
 
-        # --- Layout
+        # Materials
+        self.mesh_mat = rendering.MaterialRecord()
+        self.mesh_mat.shader = "defaultLit"  # mesh
+        self.mesh_mat.base_color = (0.85, 0.85, 0.85, 1.0)
+
+        self.heat_mat = rendering.MaterialRecord()
+        self.heat_mat.shader = "defaultUnlit"  # colored points
+        self.heat_mat.point_size = 3.0
+
+        # Build UI
+        self._build_app()
+
+    def _build_app(self):
+        self.app = gui.Application.instance
+        self.app.initialize()
+
+        self.window = self.app.create_window(self.title, 1400, 900)
+        self.window.set_on_layout(self._on_layout)
+
         em = self.window.theme.font_size
-        margin = 0.5 * em
-        self.panel = gui.Vert(0.5 * em, gui.Margins(margin, margin, margin, margin))
-        self.window.add_child(self.panel)
+        self.margin = int(0.5 * em)
+        self.panel_width = int(18 * em)
 
-        # --- Checkboxes
-        self.cb_mesh = gui.Checkbox("Show surface mesh")
-        self.cb_mesh.checked = True
-        self.cb_mesh.set_on_checked(self._on_toggle_mesh)
-        self.panel.add_child(self.cb_mesh)
+        # Left panel
+        self.panel = gui.Vert(0, gui.Margins(self.margin, self.margin, self.margin, self.margin))
 
-        self.cb_heat = gui.Checkbox("Show heatmap")
-        self.cb_heat.checked = True
-        self.cb_heat.set_on_checked(self._on_toggle_heat)
-        self.panel.add_child(self.cb_heat)
+        self.chk_mesh = gui.Checkbox("Show surface mesh")
+        self.chk_mesh.checked = True
+        self.chk_mesh.set_on_checked(self._on_toggle_mesh)
+        self.panel.add_child(self.chk_mesh)
 
-        # --- Threshold slider
-        self.panel.add_child(gui.Label("Heat threshold (keeps voxels with value >= threshold)"))
+        self.chk_heat = gui.Checkbox("Show heatmap")
+        self.chk_heat.checked = True
+        self.chk_heat.set_on_checked(self._on_toggle_heat)
+        self.panel.add_child(self.chk_heat)
+
+        self.panel.add_child(gui.Label("Heat threshold (keeps\nvoxels with value >=\nthreshold)"))
         self.thresh_slider = gui.Slider(gui.Slider.DOUBLE)
-        self.thresh_slider.set_limits(self.vmin, self.vmax)
-        self.thresh_slider.double_value = self.default_thresh
+        self.thresh_slider.set_limits(0.0, 1.0)
+        self.thresh_slider.double_value = 0.5
         self.thresh_slider.set_on_value_changed(self._on_thresh_changed)
         self.panel.add_child(self.thresh_slider)
 
-        # --- Alpha slider
         self.panel.add_child(gui.Label("Heat opacity"))
-        self.alpha_slider = gui.Slider(gui.Slider.DOUBLE)
-        self.alpha_slider.set_limits(0.05, 1.0)
-        self.alpha_slider.double_value = self.alpha
-        self.alpha_slider.set_on_value_changed(self._on_alpha_changed)
-        self.panel.add_child(self.alpha_slider)
+        self.opacity_slider = gui.Slider(gui.Slider.DOUBLE)
+        self.opacity_slider.set_limits(0.05, 1.0)
+        self.opacity_slider.double_value = self.heat_opacity
+        self.opacity_slider.set_on_value_changed(self._on_opacity_changed)
+        self.panel.add_child(self.opacity_slider)
 
-        # --- Scene widget
-        self.scene = gui.SceneWidget()
-        self.scene.scene = rendering.Open3DScene(self.window.renderer)
-        self.scene.scene.set_background([1, 1, 1, 1])  # white background
-        self.window.add_child(self.scene)
+        self.panel.add_child(gui.Label(" "))
+        self.btn_reframe = gui.Button("Reframe")
+        self.btn_reframe.set_on_clicked(self._on_reframe)
+        self.panel.add_child(self.btn_reframe)
 
-        self.window.set_on_layout(self._on_layout)
+        # Scene widget
+        self.scene_widget = gui.SceneWidget()
+        self.scene_widget.scene = rendering.Open3DScene(self.window.renderer)
+        self.scene_widget.scene.set_background([1, 1, 1, 1])  # white
 
-        # Add geometry
-        self._add_or_update_mesh()
-        self._add_or_update_heat()
+        self.window.add_child(self.panel)
+        self.window.add_child(self.scene_widget)
 
-        # Fit camera
+        # Load data & add geometry
+        self._load_all()
+        self._add_initial_geometries()
         self._fit_camera()
-
-    def _load_data(self):
-        # Mesh
-        if self.mesh_path.exists():
-            self.mesh = o3d.io.read_triangle_mesh(str(self.mesh_path))
-            if not self.mesh.has_vertex_normals():
-                self.mesh.compute_vertex_normals()
-
-        # Volume
-        self.V, self.origin, self.voxel_size = load_volume_npz(self.volume_path)
-        vals = self.V[np.isfinite(self.V)]
-        self.vmin = float(np.min(vals))
-        self.vmax = float(np.max(vals))
-        # start threshold near top-ish so it’s not insanely dense
-        self.default_thresh = self.vmin + 0.75 * (self.vmax - self.vmin)
 
     def _on_layout(self, layout_context):
         r = self.window.content_rect
-        panel_width = int(320)
-        self.panel.frame = gui.Rect(r.x, r.y, panel_width, r.height)
-        self.scene.frame = gui.Rect(r.x + panel_width, r.y, r.width - panel_width, r.height)
+        self.panel.frame = gui.Rect(r.x, r.y, self.panel_width, r.height)
+        self.scene_widget.frame = gui.Rect(r.x + self.panel_width, r.y, r.width - self.panel_width, r.height)
 
-    def _fit_camera(self):
-        bbox = None
-        if self.mesh is not None:
-            bbox = self.mesh.get_axis_aligned_bounding_box()
+    def _load_all(self):
+        if not self.mesh_path.exists():
+            raise FileNotFoundError(f"Mesh not found: {self.mesh_path}")
+        if not self.vol_path.exists():
+            raise FileNotFoundError(f"Volume not found: {self.vol_path}")
+
+        # Mesh
+        self.mesh = o3d.io.read_triangle_mesh(str(self.mesh_path))
+        if self.mesh.is_empty():
+            raise ValueError(f"Mesh loaded but empty: {self.mesh_path}")
+        if not self.mesh.has_vertex_normals():
+            self.mesh.compute_vertex_normals()
+
+        # Volume
+        self.V, self.origin, self.voxel_size, keys = load_volume_npz(self.vol_path)
+        self.V = np.asarray(self.V)
+
+        vmin, vmax = float(np.min(self.V)), float(np.max(self.V))
+        # Pick a sensible default threshold: near top 90th percentile (keeps "hot" voxels)
+        self.default_thresh = float(np.percentile(self.V, 90.0))
+        self.heat_threshold = self.default_thresh
+
+        # Configure slider range and initial value
+        # Range: [vmin, vmax], clamp if degenerate
+        if abs(vmax - vmin) < 1e-9:
+            vmax = vmin + 1.0
+        self.thresh_slider.set_limits(vmin, vmax)
+        self.thresh_slider.double_value = self.default_thresh
+
+    def _add_initial_geometries(self):
+        # Add mesh
+        self.scene_widget.scene.add_geometry(self.MESH_NAME, self.mesh, self.mesh_mat)
+
+        # Add heat
+        self._add_or_update_heat()
+        if self.heat_geom is not None:
+            self.scene_widget.scene.add_geometry(self.HEAT_NAME, self.heat_geom, self.heat_mat)
+
+    def _make_heat_pointcloud(self, thresh: float) -> o3d.geometry.PointCloud:
+        idx = np.argwhere(self.V >= thresh)
+        if idx.shape[0] == 0:
+            return o3d.geometry.PointCloud()
+
+        # voxel centers -> world points
+        pts = self.origin + (idx + 0.5) * float(self.voxel_size)
+
+        # values for colors
+        vals = self.V[idx[:, 0], idx[:, 1], idx[:, 2]].astype(np.float64)
+
+        # normalize 0..1 for coloring
+        v0 = float(np.min(vals))
+        v1 = float(np.max(vals))
+        if abs(v1 - v0) < 1e-12:
+            t = np.zeros_like(vals)
         else:
-            # heat-only bbox estimate
-            bbox = o3d.geometry.AxisAlignedBoundingBox(self.origin, self.origin + np.array(self.V.shape) * self.voxel_size)
+            t = (vals - v0) / (v1 - v0)
 
-        self.scene.setup_camera(60.0, bbox, bbox.get_center())
+        # simple colormap-ish (blue->green->yellow)
+        # (keep it lightweight; no matplotlib dependency)
+        colors = np.zeros((t.shape[0], 3), dtype=np.float64)
+        colors[:, 0] = np.clip(2 * (t - 0.5), 0, 1)          # R grows in top half
+        colors[:, 1] = np.clip(2 * (1 - np.abs(t - 0.5)), 0, 1)  # G peaks mid
+        colors[:, 2] = np.clip(1 - 2 * t, 0, 1)              # B fades out
 
-    def _add_or_update_mesh(self):
-        self.scene.scene.remove_geometry("mesh")
-        if self.mesh is None or not self.mesh_visible:
-            return
-
-        mat = rendering.MaterialRecord()
-        mat.shader = "defaultLit"
-        self.scene.scene.add_geometry("mesh", self.mesh, mat)
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pts)
+        pcd.colors = o3d.utility.Vector3dVector(colors)
+        return pcd
 
     def _add_or_update_heat(self):
-        self.scene.scene.remove_geometry("heat")
+        self.heat_threshold = float(self.thresh_slider.double_value)
 
-        if not self.heat_visible:
-            return
+        self.heat_geom = self._make_heat_pointcloud(self.heat_threshold)
 
-        pcd = make_heatmap_pointcloud(
-            self.V, self.origin, self.voxel_size,
-            thresh=float(self.thresh_slider.double_value) if hasattr(self, "thresh_slider") else self.default_thresh
-        )
+        # update opacity via material alpha
+        self.heat_mat.base_color = (1.0, 1.0, 1.0, float(self.opacity_slider.double_value))
 
-        mat = rendering.MaterialRecord()
-        mat.shader = "defaultUnlit"
-        mat.base_color = [1, 1, 1, float(self.alpha)]
-        mat.point_size = 3.0  # adjust if needed
-        self.scene.scene.add_geometry("heat", pcd, mat)
+        # If already in scene, remove & re-add (safe + simple)
+        if self.scene_widget.scene.has_geometry(self.HEAT_NAME):
+            self.scene_widget.scene.remove_geometry(self.HEAT_NAME)
 
-    def _on_toggle_mesh(self, checked):
+        if self.heat_visible and self.heat_geom is not None and not self.heat_geom.is_empty():
+            self.scene_widget.scene.add_geometry(self.HEAT_NAME, self.heat_geom, self.heat_mat)
+
+    def _fit_camera(self):
+        boxes = []
+
+        # mesh bbox
+        if self.mesh is not None:
+            try:
+                v = np.asarray(self.mesh.vertices)
+                boxes.append(robust_bbox_from_points(v, self.pct_lo, self.pct_hi))
+            except Exception:
+                boxes.append(self.mesh.get_axis_aligned_bounding_box())
+
+        # heat bbox (based on currently visible threshold)
+        if self.heat_visible and self.V is not None:
+            thresh = float(self.thresh_slider.double_value)
+            idx = np.argwhere(self.V >= thresh)
+            if idx.shape[0] > 0:
+                pts = self.origin + (idx + 0.5) * float(self.voxel_size)
+                boxes.append(robust_bbox_from_points(pts, self.pct_lo, self.pct_hi))
+
+        if not boxes:
+            bbox = o3d.geometry.AxisAlignedBoundingBox(np.array([-1, -1, -1]), np.array([1, 1, 1]))
+        else:
+            bbox = boxes[0]
+            for b in boxes[1:]:
+                bbox += b  # union
+
+        self.scene_widget.scene.setup_camera(60.0, bbox, bbox.get_center())
+
+    # ---------------- UI callbacks ----------------
+
+    def _on_toggle_mesh(self, checked: bool):
         self.mesh_visible = bool(checked)
-        self._add_or_update_mesh()
+        if self.scene_widget.scene.has_geometry(self.MESH_NAME):
+            self.scene_widget.scene.remove_geometry(self.MESH_NAME)
+        if self.mesh_visible:
+            self.scene_widget.scene.add_geometry(self.MESH_NAME, self.mesh, self.mesh_mat)
+        self._fit_camera()
 
-    def _on_toggle_heat(self, checked):
+    def _on_toggle_heat(self, checked: bool):
         self.heat_visible = bool(checked)
-        self._add_or_update_heat()
+        if self.scene_widget.scene.has_geometry(self.HEAT_NAME):
+            self.scene_widget.scene.remove_geometry(self.HEAT_NAME)
+        if self.heat_visible:
+            self._add_or_update_heat()
+        self._fit_camera()
 
-    def _on_thresh_changed(self, value):
-        self._add_or_update_heat()
+    def _on_thresh_changed(self, _value: float):
+        if self.heat_visible:
+            self._add_or_update_heat()
+        self._fit_camera()
 
-    def _on_alpha_changed(self, value):
-        self.alpha = float(value)
-        # easiest: rebuild heat with new alpha
-        self._add_or_update_heat()
+    def _on_opacity_changed(self, value: float):
+        self.heat_opacity = float(value)
+        if self.heat_visible:
+            self._add_or_update_heat()
+
+    def _on_reframe(self):
+        self._fit_camera()
 
     def run(self):
-        gui.Application.instance.run()
-
-
-def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument("--run", required=True, help="Run directory (the folder that contains raw/ processed/ exports/)")
-    p.add_argument("--mesh", default="processed/open3d_mesh.ply")
-    p.add_argument("--volume", default="exports/volume.npz")
-    return p.parse_args()
+        self.app.run()
 
 
 def main():
     args = parse_args()
-    run_dir = Path(args.run)
+    run_dir = Path(args.run).expanduser().resolve()
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run dir not found: {run_dir}")
 
-    mesh_path = run_dir / args.mesh
-    vol_path = run_dir / args.volume
-
-    if not vol_path.exists():
-        raise SystemExit(f"ERROR: volume not found: {vol_path}")
-    if not mesh_path.exists():
-        print(f"WARNING: mesh not found: {mesh_path} (heatmap-only mode)")
-
-    app = App(mesh_path, vol_path)
-    app.run()
+    viewer = FluxSpaceViewer(
+        run_dir=run_dir,
+        mesh_rel=args.mesh,
+        volume_rel=args.volume,
+        title=args.title,
+        pct_lo=args.percentile_lo,
+        pct_hi=args.percentile_hi,
+    )
+    viewer.run()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
