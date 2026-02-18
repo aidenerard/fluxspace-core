@@ -2,18 +2,23 @@
 """
 view_scan_toggle.py
 
-Interactive FluxSpace viewer: surface mesh + magnetic heatmap with toggles.
+Interactive FluxSpace viewer: surface mesh + optional magnetic heatmap.
 
 Loads from a canonical run folder (in preference order):
   processed/open3d_mesh_clean.ply  (cleaned mesh, preferred)
-  processed/open3d_mesh.ply        (raw mesh, fallback)
+  processed/open3d_mesh_raw.ply    (raw TSDF mesh, fallback)
+  processed/open3d_mesh.ply        (legacy name, fallback)
   processed/open3d_pcd_clean.ply   (cleaned point cloud, fallback)
-  exports/volume.npz               (voxel heatmap)
+  processed/open3d_pcd_raw.ply     (raw point cloud, last resort)
+  exports/volume.npz               (voxel heatmap — optional)
+
+If volume.npz is missing the viewer opens in geometry-only mode
+(no heatmap controls). This supports camera-only runs.
 
 Controls:
   - Checkbox "Show surface mesh"
-  - Checkbox "Show heatmap"
-  - Iso threshold slider (marching-cubes isosurface)
+  - Checkbox "Show heatmap"  (hidden when no volume loaded)
+  - Iso threshold slider
   - Opacity slider
   - "Reframe" button (auto-frames visible geometry)
 
@@ -57,7 +62,7 @@ def parse_args():
     p.add_argument("--run", default="", help="RUN_DIR (or set $RUN_DIR)")
     p.add_argument("--mesh", default="", help="Override path to mesh .ply")
     p.add_argument("--volume", default="", help="Override path to volume .npz")
-    p.add_argument("--title", default="FluxSpace Viewer (Mesh + Heatmap)")
+    p.add_argument("--title", default="FluxSpace Viewer")
     return p.parse_args()
 
 
@@ -109,7 +114,7 @@ def _load_volume_npz(npz_path: Path):
 # Heatmap geometry builders
 # ---------------------------------------------------------------------------
 def _colormap_value(t: float) -> list[float]:
-    """Blue → cyan → green → yellow for t in [0, 1]."""
+    """Blue -> cyan -> green -> yellow for t in [0, 1]."""
     if t < 0.33:
         a = t / 0.33
         return [0.0, a, 1.0]
@@ -124,7 +129,6 @@ def _colormap_value(t: float) -> list[float]:
 def _marching_cubes_mesh(
     volume: np.ndarray, origin: np.ndarray, voxel_size: float, iso: float
 ) -> o3d.geometry.TriangleMesh | None:
-    """Build an isosurface mesh via marching cubes (requires scikit-image)."""
     if not HAS_SKIMAGE:
         return None
     try:
@@ -158,11 +162,10 @@ def _marching_cubes_mesh(
 def _threshold_point_cloud(
     volume: np.ndarray, origin: np.ndarray, voxel_size: float, iso: float
 ) -> o3d.geometry.PointCloud | None:
-    """Fallback: build a coloured point cloud from voxels above *iso*."""
     mask = volume >= iso
     if not np.any(mask):
         return None
-    indices = np.argwhere(mask)  # (N, 3)
+    indices = np.argwhere(mask)
     pts = origin[None, :] + indices.astype(np.float64) * voxel_size
     vals = volume[mask]
     vmin, vmax = float(vals.min()), float(vals.max())
@@ -179,10 +182,9 @@ def _threshold_point_cloud(
 
 
 # ---------------------------------------------------------------------------
-# Bounding-box helpers (union via min/max corners — avoids unsupported + op)
+# Bounding-box helpers
 # ---------------------------------------------------------------------------
 def _geom_bbox(geom) -> tuple[np.ndarray, np.ndarray] | None:
-    """Return (min_bound, max_bound) for an Open3D geometry, or None."""
     try:
         bb = geom.get_axis_aligned_bounding_box()
         lo = np.asarray(bb.get_min_bound())
@@ -195,7 +197,6 @@ def _geom_bbox(geom) -> tuple[np.ndarray, np.ndarray] | None:
 
 
 def _union_bbox(*geoms) -> o3d.geometry.AxisAlignedBoundingBox | None:
-    """Compute a union AABB from one or more geometries (None-safe)."""
     lo_all, hi_all = [], []
     for g in geoms:
         if g is None:
@@ -215,20 +216,27 @@ def _union_bbox(*geoms) -> o3d.geometry.AxisAlignedBoundingBox | None:
 # Viewer class
 # ---------------------------------------------------------------------------
 class FluxSpaceViewer:
+    """Viewer that works with geometry only (no volume) or geometry + heatmap."""
+
     def __init__(
         self, title: str, mesh: o3d.geometry.TriangleMesh | None,
-        volume: np.ndarray, origin: np.ndarray, voxel_size: float,
+        volume: np.ndarray | None, origin: np.ndarray | None,
+        voxel_size: float,
         surface_pcd: o3d.geometry.PointCloud | None = None,
     ):
         self.mesh = mesh
-        self.surface_pcd = surface_pcd  # shown when mesh is None or unchecked
+        self.surface_pcd = surface_pcd
         self.volume = volume
-        self.origin = origin
+        self.origin = origin if origin is not None else np.zeros(3, dtype=np.float32)
         self.voxel_size = voxel_size
+        self.has_volume = volume is not None
 
-        self.iso = float(np.percentile(self.volume, 95))
+        if self.has_volume:
+            self.iso = float(np.percentile(self.volume, 95))
+        else:
+            self.iso = 0.0
         self.opacity = 0.35
-        self._heat_geom = None  # TriangleMesh or PointCloud
+        self._heat_geom = None
 
         # --- Window ---
         self.window = gui.Application.instance.create_window(title, 1280, 780)
@@ -247,39 +255,43 @@ class FluxSpaceViewer:
         self.chk_mesh.set_on_checked(self._on_toggle_mesh)
         self.panel.add_child(self.chk_mesh)
 
-        self.chk_heat = gui.Checkbox("Show heatmap")
-        self.chk_heat.checked = True
-        self.chk_heat.set_on_checked(self._on_toggle_heat)
-        self.panel.add_child(self.chk_heat)
+        # Heatmap controls — only if volume is loaded
+        self.chk_heat = None
+        self.sld_iso = None
+        self.sld_op = None
+        if self.has_volume:
+            self.chk_heat = gui.Checkbox("Show heatmap")
+            self.chk_heat.checked = True
+            self.chk_heat.set_on_checked(self._on_toggle_heat)
+            self.panel.add_child(self.chk_heat)
 
-        # Iso slider
-        self.panel.add_child(gui.Label("Iso threshold"))
-        self.sld_iso = gui.Slider(gui.Slider.DOUBLE)
-        vmin = float(np.min(self.volume))
-        vmax = float(np.max(self.volume))
-        if vmax - vmin < 1e-9:
-            vmax = vmin + 1.0
-        self.sld_iso.set_limits(vmin, vmax)
-        self.sld_iso.double_value = self.iso
-        self.sld_iso.set_on_value_changed(self._on_iso_changed)
-        self.panel.add_child(self.sld_iso)
+            self.panel.add_child(gui.Label("Iso threshold"))
+            self.sld_iso = gui.Slider(gui.Slider.DOUBLE)
+            vmin = float(np.min(self.volume))
+            vmax = float(np.max(self.volume))
+            if vmax - vmin < 1e-9:
+                vmax = vmin + 1.0
+            self.sld_iso.set_limits(vmin, vmax)
+            self.sld_iso.double_value = self.iso
+            self.sld_iso.set_on_value_changed(self._on_iso_changed)
+            self.panel.add_child(self.sld_iso)
 
-        # Opacity slider
-        self.panel.add_child(gui.Label("Heat opacity"))
-        self.sld_op = gui.Slider(gui.Slider.DOUBLE)
-        self.sld_op.set_limits(0.05, 1.0)
-        self.sld_op.double_value = self.opacity
-        self.sld_op.set_on_value_changed(self._on_opacity_changed)
-        self.panel.add_child(self.sld_op)
+            self.panel.add_child(gui.Label("Heat opacity"))
+            self.sld_op = gui.Slider(gui.Slider.DOUBLE)
+            self.sld_op.set_limits(0.05, 1.0)
+            self.sld_op.double_value = self.opacity
+            self.sld_op.set_on_value_changed(self._on_opacity_changed)
+            self.panel.add_child(self.sld_op)
+
+            mode = "isosurface (marching cubes)" if HAS_SKIMAGE else "point cloud (fallback)"
+            self.panel.add_child(gui.Label(f"Heatmap: {mode}"))
+        else:
+            self.panel.add_child(gui.Label("(Geometry-only mode — no heatmap)"))
 
         # Reframe button
         self.btn_reframe = gui.Button("Reframe")
         self.btn_reframe.set_on_clicked(self._on_reframe)
         self.panel.add_child(self.btn_reframe)
-
-        # Heatmap mode label
-        mode = "isosurface (marching cubes)" if HAS_SKIMAGE else "point cloud (fallback)"
-        self.panel.add_child(gui.Label(f"Heatmap: {mode}"))
 
         # --- Layout ---
         self.window.add_child(self.scene_widget)
@@ -319,7 +331,6 @@ class FluxSpaceViewer:
             pass
 
     def _add_surface(self):
-        """Add the best available surface geometry to the scene."""
         if self.mesh is not None:
             self.scene_widget.scene.add_geometry("surface", self.mesh, self.mesh_mat)
         elif self.surface_pcd is not None:
@@ -329,26 +340,29 @@ class FluxSpaceViewer:
         self.scene_widget.scene.clear_geometry()
         if self.chk_mesh.checked:
             self._add_surface()
-        self._rebuild_heat()
+        if self.has_volume:
+            self._rebuild_heat()
         self._on_reframe()
 
     def _rebuild_heat(self):
         self._safe_remove("heat")
         self._heat_geom = None
 
-        if not self.chk_heat.checked:
+        if not self.has_volume:
+            return
+        if self.chk_heat is not None and not self.chk_heat.checked:
             return
 
-        iso = float(self.sld_iso.double_value)
+        iso = float(self.sld_iso.double_value) if self.sld_iso else self.iso
 
-        # Try marching cubes first, fall back to point cloud
         geom = None
         mat = self.heat_mat
         if HAS_SKIMAGE:
             mc = _marching_cubes_mesh(self.volume, self.origin, self.voxel_size, iso)
             if mc is not None and not mc.is_empty():
                 geom = mc
-                self.heat_mat.base_color = [1.0, 1.0, 1.0, float(self.sld_op.double_value)]
+                opacity = float(self.sld_op.double_value) if self.sld_op else self.opacity
+                self.heat_mat.base_color = [1.0, 1.0, 1.0, opacity]
                 mat = self.heat_mat
 
         if geom is None:
@@ -374,15 +388,14 @@ class FluxSpaceViewer:
             self._rebuild_heat()
 
     def _on_iso_changed(self, _):
-        if self.chk_heat.checked:
+        if self.chk_heat is not None and self.chk_heat.checked:
             self._rebuild_heat()
 
     def _on_opacity_changed(self, _):
-        if self.chk_heat.checked:
+        if self.chk_heat is not None and self.chk_heat.checked:
             self._rebuild_heat()
 
     def _on_reframe(self):
-        """Frame the camera around all visible geometry."""
         geoms = []
         if self.chk_mesh.checked:
             if self.mesh is not None:
@@ -392,17 +405,17 @@ class FluxSpaceViewer:
         if self._heat_geom is not None:
             geoms.append(self._heat_geom)
 
-        # If nothing is visible, try everything we have
         if not geoms:
             if self.mesh is not None:
                 geoms.append(self.mesh)
             elif self.surface_pcd is not None:
                 geoms.append(self.surface_pcd)
-            pc_any = _threshold_point_cloud(
-                self.volume, self.origin, self.voxel_size, float(np.min(self.volume))
-            )
-            if pc_any is not None:
-                geoms.append(pc_any)
+            if self.has_volume:
+                pc_any = _threshold_point_cloud(
+                    self.volume, self.origin, self.voxel_size, float(np.min(self.volume))
+                )
+                if pc_any is not None:
+                    geoms.append(pc_any)
 
         if not geoms:
             return
@@ -420,7 +433,6 @@ class FluxSpaceViewer:
         try:
             self.scene_widget.look_at(center, eye, up)
         except AttributeError:
-            # Older Open3D: try setup_camera
             try:
                 self.scene_widget.scene.setup_camera(60.0, bb, center)
             except Exception:
@@ -439,8 +451,8 @@ def main() -> int:
     try:
         run = resolve_run_dir(args.run if args.run else None)
     except ValueError:
-        if not args.mesh or not args.volume:
-            print("ERROR: Provide --run (or $RUN_DIR), or both --mesh and --volume.", file=sys.stderr)
+        if not args.mesh:
+            print("ERROR: Provide --run (or $RUN_DIR), or --mesh.", file=sys.stderr)
             return 2
         run = None
 
@@ -453,15 +465,16 @@ def main() -> int:
     elif run:
         mesh_candidates = [
             run / "processed" / "open3d_mesh_clean.ply",
-            run / "processed" / "open3d_mesh.ply",
-            run / "exports" / "open3d_mesh.ply",
+            run / "processed" / "open3d_mesh_raw.ply",
+            run / "processed" / "open3d_mesh.ply",  # legacy name
         ]
         for mp in mesh_candidates:
             mesh = _load_mesh(mp)
             if mesh is not None:
+                print(f"  -> Using mesh: {mp.name}")
                 break
 
-    # Point cloud fallback (used when mesh toggle is on but no mesh available)
+    # Point cloud fallback
     if mesh is None and run:
         pcd_candidates = [
             run / "processed" / "open3d_pcd_clean.ply",
@@ -470,9 +483,14 @@ def main() -> int:
         for pp in pcd_candidates:
             surface_pcd = _load_point_cloud(pp)
             if surface_pcd is not None:
+                print(f"  -> Using surface pcd: {pp.name}")
                 break
 
-    # --- Volume path ---
+    # --- Volume path (optional) ---
+    volume = None
+    origin = None
+    voxel_size = 0.02
+
     if args.volume:
         vol_path = Path(args.volume).expanduser().resolve()
     elif run:
@@ -480,27 +498,37 @@ def main() -> int:
             run / "exports" / "volume.npz",
             run / "exports" / "volume_fixed.npz",
         ]
-        vol_path = next((p for p in candidates if p.exists()), candidates[0])
+        vol_path = next((p for p in candidates if p.exists()), None)
     else:
-        vol_path = Path("volume.npz")
+        vol_path = None
 
-    if not vol_path.exists():
-        print(f"ERROR: Volume file not found: {vol_path}", file=sys.stderr)
-        print("  Run mag_world_to_voxel_volume.py first, or provide --volume.", file=sys.stderr)
+    if vol_path is not None and vol_path.exists():
+        try:
+            volume, origin, voxel_size = _load_volume_npz(vol_path)
+        except Exception as exc:
+            print(f"WARNING: Could not load volume ({exc}); continuing in geometry-only mode.")
+            traceback.print_exc()
+    elif args.volume:
+        print(f"WARNING: Volume file not found: {args.volume}; continuing in geometry-only mode.")
+
+    # --- Determine mode ---
+    if mesh is None and surface_pcd is None and volume is None:
+        print("ERROR: No geometry and no volume found. Nothing to display.", file=sys.stderr)
         return 2
 
-    try:
-        volume, origin, voxel_size = _load_volume_npz(vol_path)
-    except Exception as exc:
-        print(f"ERROR loading volume: {exc}", file=sys.stderr)
-        traceback.print_exc()
-        return 2
+    if volume is None:
+        if mesh is None and surface_pcd is None:
+            print("ERROR: No geometry found and no volume. Nothing to display.", file=sys.stderr)
+            return 2
+        print("  Geometry-only mode (no heatmap volume loaded)")
+    elif mesh is None and surface_pcd is None:
+        print("  Heatmap-only mode (no geometry loaded)")
+    else:
+        if mesh is None:
+            print("  No mesh — using point cloud for surface")
+        print("  Full mode (geometry + heatmap)")
 
-    if mesh is None and surface_pcd is None:
-        print("  (No geometry loaded — heatmap-only mode)")
-    elif mesh is None:
-        print("  (No mesh — using point cloud for surface)")
-    print(f"  Starting viewer...")
+    print("  Starting viewer...")
 
     gui.Application.instance.initialize()
     FluxSpaceViewer(args.title, mesh, volume, origin, voxel_size, surface_pcd=surface_pcd)

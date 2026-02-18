@@ -60,6 +60,18 @@ If your raw data is already captured (OAK frames + mag CSV in a run folder), the
 
 # Coarser voxels for speed:
 ./tools/3d/run_all_3d.sh --latest --voxel-size 0.04 --max-dim 128
+
+# Subsample frames for faster reconstruction:
+./tools/3d/run_all_3d.sh --latest --every-n 2 --depth-trunc 1.5
+
+# Quality presets for geometry cleaning (fast / balanced / high):
+./tools/3d/run_all_3d.sh --latest --quality high
+
+# Skip cleaning step:
+./tools/3d/run_all_3d.sh --latest --skip-clean
+
+# Validate a run without reprocessing:
+python3 pipelines/3d/validate_run.py --run data/runs/run_20260210_1430
 ```
 
 **Re-open the viewer** after the pipeline has run:
@@ -75,6 +87,56 @@ If your capture was saved on a USB drive (e.g. `/Volumes/FLUXSPACE/...`), copy t
 
 ```bash
 ./tools/3d/run_all_3d.sh --run /Volumes/FLUXSPACE/data/runs/run_20260210_1430
+```
+
+---
+
+## Camera-only runs (no magnetometer)
+
+If you only have OAK-D RGB-D data (no `mag_run.csv`), you can still reconstruct and view geometry. The pipeline skips all magnetometer fusion and voxelisation steps.
+
+**Explicit flag:**
+
+```bash
+./tools/3d/run_all_3d.sh --latest --camera-only
+./tools/3d/run_all_3d.sh --run data/runs/run_cam_only_20260210_1430 --camera-only
+```
+
+**Auto-detection:** If `raw/mag_run.csv` is missing, the script automatically switches to camera-only mode and prints a clear banner. You don't need `--camera-only` — it just skips mag steps.
+
+**Pipeline in camera-only mode:**
+
+1. Open3D reconstruction (mesh + point cloud + trajectory)
+2. Geometry cleaning (denoise, cluster, mesh repair)
+3. Viewer opens in geometry-only mode (no heatmap controls)
+
+**Expected outputs (camera-only):**
+
+```
+processed/
+  trajectory.csv
+  open3d_mesh_raw.ply
+  open3d_pcd_raw.ply
+  open3d_mesh_clean.ply     (if cleaning enabled)
+  open3d_pcd_clean.ply      (if cleaning enabled)
+  open3d_pcd_preview.ply    (lightweight preview)
+  reconstruction_report.json
+  cleaning_report.json
+```
+
+No `mag_world.csv`, no `exports/volume.npz` — those require magnetometer data.
+
+**Validation:**
+
+```bash
+python3 pipelines/3d/validate_run.py --run data/runs/run_cam_only_... --camera-only
+python3 pipelines/3d/validate_run.py --run data/runs/run_cam_only_... --camera-only --require-clean
+```
+
+**Re-open the viewer** (works the same — viewer auto-detects geometry-only mode):
+
+```bash
+python3 pipelines/3d/view_scan_toggle.py --run data/runs/run_cam_only_20260210_1430
 ```
 
 ---
@@ -118,7 +180,7 @@ python3 pipelines/3d/mag_world_to_voxel_volume.py \
 python3 pipelines/3d/view_scan_toggle.py --run "$RUN_DIR"
 ```
 
-Expected outputs: `processed/trajectory.csv`, `processed/mag_world.csv`, `exports/volume.npz`. If using OAK-D, also `processed/open3d_mesh.ply`.
+Expected outputs: `processed/trajectory.csv`, `processed/mag_world.csv`, `exports/volume.npz`. If using OAK-D, also `processed/open3d_mesh_raw.ply` and `processed/open3d_pcd_raw.ply` (plus cleaned variants if cleaning is enabled).
 
 ---
 
@@ -208,7 +270,13 @@ data/runs/run_20250123_1430/
 │       └── intrinsics.json      # fx, fy, cx, cy (from OAK-D calibration)
 ├── processed/
 │   ├── trajectory.csv           # t_rel_s, x, y, z, qx, qy, qz, qw
-│   ├── open3d_mesh.ply          # Coloured triangle mesh (from open3d_reconstruct)
+│   ├── open3d_mesh_raw.ply      # Raw TSDF mesh (from open3d_reconstruct)
+│   ├── open3d_pcd_raw.ply       # Raw point cloud (from open3d_reconstruct)
+│   ├── open3d_mesh_clean.ply    # Cleaned mesh (from clean_geometry)
+│   ├── open3d_pcd_clean.ply     # Cleaned point cloud (from clean_geometry)
+│   ├── open3d_pcd_preview.ply   # Lightweight preview point cloud (optional)
+│   ├── reconstruction_report.json  # Stats from reconstruction (odometry rate, etc.)
+│   ├── cleaning_report.json     # Stats from geometry cleaning
 │   ├── mag_world.csv            # t_rel_s, x, y, z, value, value_type
 │   └── mag_world_m.csv          # Scaled copy if auto-scale detected mm units
 └── exports/
@@ -357,7 +425,8 @@ Steps 4–5 are **identical** to the Polycam / RTAB-Map workflow — the OAK-D s
 | Script | Reads | Writes |
 |--------|-------|--------|
 | `capture_oak_rgbd.py` | OAK-D sensor (USB) | `raw/oak_rgbd/`: `color/`, `depth/`, `timestamps.csv`, `intrinsics.json` |
-| `open3d_reconstruct.py` | `raw/oak_rgbd/` frames | `processed/trajectory.csv`, `processed/open3d_mesh.ply` |
+| `open3d_reconstruct.py` | `raw/oak_rgbd/` frames | `processed/trajectory.csv`, `processed/open3d_mesh_raw.ply`, `processed/open3d_pcd_raw.ply`, `processed/reconstruction_report.json` |
+| `clean_geometry.py` | `processed/open3d_pcd_raw.ply`, `processed/open3d_mesh_raw.ply` | `processed/open3d_pcd_clean.ply`, `processed/open3d_mesh_clean.ply`, `processed/cleaning_report.json` |
 
 ### CLI flags
 
@@ -377,7 +446,30 @@ Steps 4–5 are **identical** to the Polycam / RTAB-Map workflow — the OAK-D s
 | `--out PATH` | Override: explicit trajectory.csv path. |
 | `--mesh PATH` | Override: explicit mesh PLY path. |
 | `--voxel-size M` | TSDF voxel size in metres. Default: 0.01. |
+| `--sdf-trunc M` | SDF truncation in metres. Default: max(voxel*4, 0.04). |
+| `--depth-trunc M` | Max depth in metres. Default: 3.0. |
+| `--depth-scale F` | Depth image unit conversion (default: 1000 = mm). |
+| `--every-n N` | Use every Nth frame (default: 1 = all). Speeds up reconstruction. |
+| `--max-frames N` | Stop after N frames (default: 0 = no limit). |
+| `--odometry-method` | `hybrid` (default) or `color`. |
+| `--save-glb` | Also export mesh as `.glb` for web viewing. |
 | `--no-viz` | Skip Open3D interactive viewer (headless / CI). |
+
+**`clean_geometry.py`:**
+
+| Flag | Description |
+|------|-------------|
+| `--run-dir DIR` | Run directory — derives default input/output paths. |
+| `--in-pcd PATH` | Input point cloud. Default: `RUN_DIR/processed/open3d_pcd_raw.ply`. |
+| `--in-mesh PATH` | Input raw mesh for mesh cleaning. Default: `RUN_DIR/processed/open3d_mesh_raw.ply`. |
+| `--downsample F` | Voxel downsample size (default: 0.005). |
+| `--sor-nb-neighbors N` | SOR neighbour count (default: 30). |
+| `--sor-std-ratio F` | SOR std ratio (default: 2.0). |
+| `--ror-radius F` | Radius outlier removal radius (default: 0.02). |
+| `--remove-plane` | Remove dominant plane (RANSAC). |
+| `--crop-from-trajectory` | Crop to trajectory bounding box. |
+| `--no-traj-crop` | Force skip trajectory crop. |
+| `--save-glb` | Export cleaned mesh as `.glb`. |
 
 See [capture_oak_rgbd_explanation.md](capture_oak_rgbd_explanation.md) and [open3d_reconstruct_explanation.md](open3d_reconstruct_explanation.md) for full details.
 
@@ -594,6 +686,12 @@ If a script needs a missing dependency, it will print a clear error and the pack
 | **scikit-learn missing** | `pip install scikit-learn` (required for GPR method). |
 | **pyvista add_volume / scalar_range error** | Fixed in this repo: script uses `clim` (not `scalar_range`). Update the script or re-pull. |
 | **Headless / no GUI** | Use `--screenshot --no-show` for 3D screenshot only; use `--show-slices --save --no-show` for slice PNGs. |
+| **Geometry "confetti" / noise** | Run with `--quality high` or increase `--clean-sor-nb`. Use `--remove-plane` to drop the ground surface. |
+| **Low odometry success rate** | Try `--every-n 2` to skip frames, or `--depth-trunc 1.5` if the scene is close-range. Check `reconstruction_report.json` for exact rate. |
+| **Trajectory has NaN poses** | `open3d_reconstruct.py` now filters NaNs. `clean_geometry.py` falls back to PCD bounds if trajectory crop is invalid. |
+| **Cleaning takes too long** | Use `--quality fast` or `--skip-clean`. Lower quality reduces SOR neighbours and increases downsample voxel size. |
+| **Pipeline fails: "Missing mag file"** | Use `--camera-only` flag, or the script auto-detects if `mag_run.csv` is absent. Camera-only runs skip fusion + voxelisation. |
+| **Viewer says "no volume"** | Normal for camera-only runs. The viewer opens in geometry-only mode (no heatmap controls). |
 | **OAK-D not detected** | Ensure USB 3 cable is plugged directly into Mac (not a hub). Run `python -c "import depthai; print(depthai.Device.getAllAvailableDevices())"` to check. |
 | **OAK-D capture slow / laggy** | Reduce colour resolution or depth output size in `capture_oak_rgbd.py`. Ensure USB 3 (not USB 2). |
 | **Open3D mesh is empty or garbled** | Check that intrinsics roughly match the camera. Use real OAK-D calibration (see explanation doc). Ensure depth images are 16-bit PNG in mm. |
@@ -608,9 +706,15 @@ If a script needs a missing dependency, it will print a clear error and the pack
 |------|--------|-------------------|
 | OAK-D capture | `raw/oak_rgbd/` | `color/`, `depth/`, `timestamps.csv`, `intrinsics.json` |
 | Trajectory (any source) | `processed/trajectory.csv` | `t_rel_s, x, y, z, qx, qy, qz, qw` |
-| Open3D mesh (OAK-D only) | `processed/open3d_mesh.ply` | Coloured triangle mesh (PLY) |
+| Reconstruction (OAK-D) | `processed/open3d_mesh_raw.ply` | Raw TSDF triangle mesh |
+| | `processed/open3d_pcd_raw.ply` | Raw TSDF point cloud |
+| | `processed/reconstruction_report.json` | Odometry stats, parameters |
+| Clean geometry | `processed/open3d_mesh_clean.ply` | Cleaned mesh (non-manifold removed, denoised) |
+| | `processed/open3d_pcd_clean.ply` | Cleaned point cloud (SOR + ROR + DBSCAN) |
+| | `processed/cleaning_report.json` | Cleaning stats, parameters |
 | Fuse | `processed/mag_world.csv` | `t_rel_s, x, y, z, value, value_type` |
 | Voxel | `exports/volume.npz` | 3D float32 array + `origin`, `voxel_size`, `value_min`, `value_max` |
+| Validate | `validate_run.py --run` | Smoke test: checks all expected files |
 | Viewer | `view_scan_toggle.py --run` | Interactive mesh + heatmap viewer |
 
 All scripts use **argparse**, **clear prints** of inputs/outputs, and write into the **run folder**; defaults are set for reproducible runs.
@@ -633,6 +737,8 @@ Detailed docs for each 3D pipeline script:
 | `fuse_mag_with_trajectory` | [fuse_mag_with_trajectory_explanation.md](fuse_mag_with_trajectory_explanation.md) |
 | `mag_world_to_voxel_volume` | [mag_world_to_voxel_volume_explanation.md](mag_world_to_voxel_volume_explanation.md) |
 | `visualize_3d_heatmap` | [visualize_3d_heatmap_explanation.md](visualize_3d_heatmap_explanation.md) |
+| `clean_geometry` | Automatic geometry cleaning: crop, denoise, cluster, mesh repair |
+| `validate_run` | Smoke test: checks a run directory for expected files and data quality |
 | `view_scan_toggle` | Interactive mesh + heatmap viewer (Open3D GUI) |
 | `run_paths` | Shared helper module for resolving run-folder paths |
 | **Shell tools** | |
