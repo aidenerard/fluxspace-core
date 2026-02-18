@@ -14,6 +14,7 @@ Inputs  (from capture_oak_rgbd.py output, default: RUN_DIR/raw/oak_rgbd):
 
 Outputs (default: RUN_DIR/processed/):
   trajectory.csv          t_rel_s, x, y, z, qx, qy, qz, qw
+  open3d_pcd_raw.ply      raw coloured point cloud (for clean_geometry.py)
   open3d_mesh.ply         coloured triangle mesh
 """
 
@@ -238,6 +239,9 @@ def main() -> int:
     mesh = volume.extract_triangle_mesh()
     mesh.compute_vertex_normals()
 
+    # --- Extract raw point cloud (for clean_geometry.py) ---
+    pcd_raw = volume.extract_point_cloud()
+
     # --- Resolve output directory ---
     if args.out_dir:
         out_dir = Path(args.out_dir).expanduser().resolve()
@@ -277,6 +281,17 @@ def main() -> int:
     print(f"Wrote trajectory : {traj_path}  ({len(frame_poses)} poses)")
     t_max = ((ts_map.get(len(frame_poses) - 1, 0) - t0) / 1000.0) if ts_map else (len(frame_poses) - 1) / 30.0
     print(f"  t_rel_s range  : 0.000 .. {t_max:.3f} s")
+
+    # --- Write raw point cloud ---
+    pcd_path = out_dir / "open3d_pcd_raw.ply"
+    if pcd_raw is not None and not pcd_raw.is_empty():
+        o3d.io.write_point_cloud(str(pcd_path), pcd_raw)
+        print(f"Wrote pcd_raw    : {pcd_path}  ({len(pcd_raw.points):,} points)")
+    else:
+        # Fallback: sample from mesh
+        pcd_raw = mesh.sample_points_uniformly(number_of_points=min(200_000, len(mesh.vertices)))
+        o3d.io.write_point_cloud(str(pcd_path), pcd_raw)
+        print(f"Wrote pcd_raw    : {pcd_path}  ({len(pcd_raw.points):,} points, sampled from mesh)")
 
     o3d.io.write_triangle_mesh(str(mesh_path), mesh)
     print(f"Wrote mesh       : {mesh_path}")

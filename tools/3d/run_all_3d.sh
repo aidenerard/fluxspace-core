@@ -38,6 +38,11 @@ OAK_OVERRIDE=""
 EXT_OVERRIDE=""
 DEFAULT_EXTRINSICS=""
 VERBOSE=false
+QUALITY=""             # fast | balanced | high (empty = balanced)
+CLEAN_VOXEL=""         # override for clean_geometry --voxel-size
+CLEAN_SOR_NB=""        # override for clean_geometry --sor-nb-neighbors
+CLEAN_SOR_STD=""       # override for clean_geometry --sor-std-ratio
+NO_CLEAN=false         # skip cleaning step entirely
 
 # ── Usage ──────────────────────────────────────────────────────────────────
 usage() {
@@ -51,8 +56,10 @@ Modes (pick one):
 
 Options:
   --repo-root <path>    Repository root (default: auto-detect from git)
+  --quality <preset>    fast | balanced | high  (default: balanced)
   --no-viewer           Skip the Open3D viewer at the end
-  --voxel-size <float>  Voxel edge length in metres (default: 0.02)
+  --no-clean            Skip geometry cleaning step
+  --voxel-size <float>  Voxel edge length for mag volume (default: 0.02)
   --max-dim <int>       Max voxels per axis (default: 256)
   --mag <path>          Override magnetometer CSV (default: raw/mag_run.csv)
   --oak <path>          Override OAK capture dir  (default: raw/oak_rgbd)
@@ -80,6 +87,11 @@ while [[ $# -gt 0 ]]; do
       REPO_ROOT="$2"; shift 2 ;;
     --no-viewer)
       NO_VIEWER=true; shift ;;
+    --no-clean)
+      NO_CLEAN=true; shift ;;
+    --quality)
+      [[ -z "${2:-}" ]] && die "--quality requires fast|balanced|high"
+      QUALITY="$2"; shift 2 ;;
     --voxel-size)
       [[ -z "${2:-}" ]] && die "--voxel-size requires a value"
       VOXEL_SIZE="$2"; shift 2 ;;
@@ -138,6 +150,28 @@ _py_check pandas  pandas
 _py_check open3d  open3d  || die "open3d is required for reconstruction + viewer."
 _py_check scipy   scipy   || warn "scipy missing — IDW interpolation will fail; scatter method still works."
 info "Core dependencies OK"
+
+# ── Quality presets ───────────────────────────────────────────────────────
+# Preset sets defaults; explicit CLI flags always override.
+case "${QUALITY:-balanced}" in
+  fast)
+    : "${CLEAN_VOXEL:=0.01}"
+    : "${CLEAN_SOR_NB:=20}"
+    : "${CLEAN_SOR_STD:=2.5}"
+    info "Quality preset: fast" ;;
+  balanced|"")
+    : "${CLEAN_VOXEL:=0.005}"
+    : "${CLEAN_SOR_NB:=30}"
+    : "${CLEAN_SOR_STD:=2.0}"
+    info "Quality preset: balanced" ;;
+  high)
+    : "${CLEAN_VOXEL:=0.003}"
+    : "${CLEAN_SOR_NB:=40}"
+    : "${CLEAN_SOR_STD:=1.8}"
+    warn "Quality preset: high (may be slower)" ;;
+  *)
+    die "Unknown --quality '$QUALITY'. Use fast, balanced, or high." ;;
+esac
 
 # ── Run directory selection ────────────────────────────────────────────────
 banner "Selecting run directory"
@@ -274,7 +308,54 @@ run_step "Open3D reconstruction" \
   || die "Reconstruction finished but trajectory.csv was not created."
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Step 2: Fuse magnetometer with trajectory → processed/mag_world.csv
+# Step 2: Clean geometry → open3d_pcd_clean.ply + open3d_mesh_clean.ply
+# ═══════════════════════════════════════════════════════════════════════════
+if ! $NO_CLEAN; then
+  PCD_RAW="$RUN_DIR/processed/open3d_pcd_raw.ply"
+  MESH_RAW="$RUN_DIR/processed/open3d_mesh.ply"
+
+  # Fallback: if pcd_raw doesn't exist, sample from mesh
+  if [[ ! -f "$PCD_RAW" && -f "$MESH_RAW" ]]; then
+    banner "Step 2a: Sampling point cloud from mesh (pcd_raw not found)"
+    python3 -c "
+import open3d as o3d, sys
+m = o3d.io.read_triangle_mesh('$MESH_RAW')
+if m.is_empty(): sys.exit(1)
+n = min(200000, len(m.vertices))
+pcd = m.sample_points_uniformly(number_of_points=n)
+o3d.io.write_point_cloud('$PCD_RAW', pcd)
+print(f'Sampled {len(pcd.points)} points from mesh -> $PCD_RAW')
+" || warn "Could not sample pcd from mesh; cleaning will be skipped."
+  fi
+
+  if [[ -f "$PCD_RAW" ]]; then
+    CLEAN_ARGS=(
+      python3 pipelines/3d/clean_geometry.py
+      --in-pcd   "$PCD_RAW"
+      --out-pcd  "$RUN_DIR/processed/open3d_pcd_clean.ply"
+      --out-mesh "$RUN_DIR/processed/open3d_mesh_clean.ply"
+      --voxel-size       "$CLEAN_VOXEL"
+      --sor-nb-neighbors "$CLEAN_SOR_NB"
+      --sor-std-ratio    "$CLEAN_SOR_STD"
+      --remove-plane
+    )
+    # Trajectory crop if trajectory exists
+    if [[ -f "$RUN_DIR/processed/trajectory.csv" ]]; then
+      CLEAN_ARGS+=(--trajectory "$RUN_DIR/processed/trajectory.csv" --crop-from-trajectory)
+    else
+      warn "No trajectory for crop; running clean_geometry without trajectory crop."
+    fi
+
+    run_step "Clean geometry" "${CLEAN_ARGS[@]}"
+  else
+    warn "No raw point cloud or mesh found; skipping cleaning step."
+  fi
+else
+  info "Cleaning skipped (--no-clean)"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Step 3: Fuse magnetometer with trajectory → processed/mag_world.csv
 # ═══════════════════════════════════════════════════════════════════════════
 FUSE_ARGS=(
   python3 pipelines/3d/fuse_mag_with_trajectory.py
@@ -298,7 +379,7 @@ run_step "Fuse mag with trajectory" "${FUSE_ARGS[@]}"
   || die "Fusion finished but mag_world.csv was not created."
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Step 3: Voxel volume → exports/volume.npz
+# Step 4: Voxel volume → exports/volume.npz
 # ═══════════════════════════════════════════════════════════════════════════
 # Use mag_world_m.csv if the auto-scaler produced it and the original is absent
 MAG_WORLD="$RUN_DIR/processed/mag_world.csv"
@@ -318,10 +399,10 @@ run_step "Voxel volume" \
   || die "Voxelisation finished but volume.npz was not created."
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Step 4: Viewer (optional)
+# Step 5: Viewer (optional)
 # ═══════════════════════════════════════════════════════════════════════════
 if ! $NO_VIEWER; then
-  banner "Step 4: Launching viewer"
+  banner "Step 5: Launching viewer"
   echo "  Close the viewer window when done to see the final summary."
   python3 pipelines/3d/view_scan_toggle.py \
     --run "$RUN_DIR" \
@@ -346,16 +427,30 @@ except ValueError: print('$1')
 MAG_OUT="$RUN_DIR/processed/mag_world.csv"
 [[ -f "$RUN_DIR/processed/mag_world_m.csv" ]] && MAG_OUT="$RUN_DIR/processed/mag_world_m.csv (scaled)"
 
+# Determine which geometry the viewer will show
+GEOM_LABEL="(none)"
+if [[ -f "$RUN_DIR/processed/open3d_mesh_clean.ply" ]]; then
+  GEOM_LABEL="processed/open3d_mesh_clean.ply"
+elif [[ -f "$RUN_DIR/processed/open3d_mesh.ply" ]]; then
+  GEOM_LABEL="processed/open3d_mesh.ply (uncleaned)"
+elif [[ -f "$RUN_DIR/processed/open3d_pcd_clean.ply" ]]; then
+  GEOM_LABEL="processed/open3d_pcd_clean.ply (point cloud)"
+fi
+
 printf "\n"
 printf "${_G}════════════════════════════════════════${_R}\n"
 printf "${_G}  Done — all 3D pipeline steps complete ${_R}\n"
 printf "${_G}════════════════════════════════════════${_R}\n"
 printf "\n"
-printf "  RUN_DIR     : %s\n" "$(_rel "$RUN_DIR")"
-printf "  Mesh        : %s\n" "$(_rel "$RUN_DIR/processed/open3d_mesh.ply")"
-printf "  Trajectory  : %s\n" "$(_rel "$RUN_DIR/processed/trajectory.csv")"
-printf "  Mag world   : %s\n" "$(_rel "$MAG_OUT")"
-printf "  Volume      : %s\n" "$(_rel "$RUN_DIR/exports/volume.npz")"
+printf "  RUN_DIR      : %s\n" "$(_rel "$RUN_DIR")"
+printf "  Geometry     : %s\n" "$GEOM_LABEL"
+[[ -f "$RUN_DIR/processed/open3d_pcd_raw.ply" ]] && \
+printf "  Raw pcd      : %s\n" "$(_rel "$RUN_DIR/processed/open3d_pcd_raw.ply")"
+[[ -f "$RUN_DIR/processed/open3d_pcd_clean.ply" ]] && \
+printf "  Clean pcd    : %s\n" "$(_rel "$RUN_DIR/processed/open3d_pcd_clean.ply")"
+printf "  Trajectory   : %s\n" "$(_rel "$RUN_DIR/processed/trajectory.csv")"
+printf "  Mag world    : %s\n" "$(_rel "$MAG_OUT")"
+printf "  Volume       : %s\n" "$(_rel "$RUN_DIR/exports/volume.npz")"
 printf "\n"
 printf "  Re-open viewer:\n"
 printf "    python3 pipelines/3d/view_scan_toggle.py --run \"%s\"\n" "$(_rel "$RUN_DIR")"

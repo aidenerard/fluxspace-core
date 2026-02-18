@@ -4,9 +4,11 @@ view_scan_toggle.py
 
 Interactive FluxSpace viewer: surface mesh + magnetic heatmap with toggles.
 
-Loads from a canonical run folder:
-  processed/open3d_mesh.ply   (surface mesh, optional)
-  exports/volume.npz          (voxel heatmap)
+Loads from a canonical run folder (in preference order):
+  processed/open3d_mesh_clean.ply  (cleaned mesh, preferred)
+  processed/open3d_mesh.ply        (raw mesh, fallback)
+  processed/open3d_pcd_clean.ply   (cleaned point cloud, fallback)
+  exports/volume.npz               (voxel heatmap)
 
 Controls:
   - Checkbox "Show surface mesh"
@@ -74,6 +76,16 @@ def _load_mesh(mesh_path: Path) -> o3d.geometry.TriangleMesh | None:
         mesh.compute_vertex_normals()
     print(f"  Loaded mesh: {mesh_path}  ({len(mesh.vertices)} vertices)")
     return mesh
+
+
+def _load_point_cloud(pcd_path: Path) -> o3d.geometry.PointCloud | None:
+    if not pcd_path.exists():
+        return None
+    pcd = o3d.io.read_point_cloud(str(pcd_path))
+    if pcd.is_empty():
+        return None
+    print(f"  Loaded point cloud: {pcd_path}  ({len(pcd.points)} points)")
+    return pcd
 
 
 def _load_volume_npz(npz_path: Path):
@@ -206,8 +218,10 @@ class FluxSpaceViewer:
     def __init__(
         self, title: str, mesh: o3d.geometry.TriangleMesh | None,
         volume: np.ndarray, origin: np.ndarray, voxel_size: float,
+        surface_pcd: o3d.geometry.PointCloud | None = None,
     ):
         self.mesh = mesh
+        self.surface_pcd = surface_pcd  # shown when mesh is None or unchecked
         self.volume = volume
         self.origin = origin
         self.voxel_size = voxel_size
@@ -226,8 +240,10 @@ class FluxSpaceViewer:
         self.panel = gui.Vert(0, gui.Margins(10, 10, 10, 10))
         self.panel.add_child(gui.Label("FluxSpace Controls"))
 
-        self.chk_mesh = gui.Checkbox("Show surface mesh")
-        self.chk_mesh.checked = mesh is not None
+        has_surface = mesh is not None or surface_pcd is not None
+        label = "Show surface mesh" if mesh is not None else "Show surface (point cloud)"
+        self.chk_mesh = gui.Checkbox(label)
+        self.chk_mesh.checked = has_surface
         self.chk_mesh.set_on_checked(self._on_toggle_mesh)
         self.panel.add_child(self.chk_mesh)
 
@@ -274,6 +290,10 @@ class FluxSpaceViewer:
         self.mesh_mat = rendering.MaterialRecord()
         self.mesh_mat.shader = "defaultLit"
 
+        self.surface_pcd_mat = rendering.MaterialRecord()
+        self.surface_pcd_mat.shader = "defaultUnlit"
+        self.surface_pcd_mat.point_size = 2.0
+
         self.heat_mat = rendering.MaterialRecord()
         self.heat_mat.shader = "defaultLitTransparency"
         self.heat_mat.base_color = [1.0, 1.0, 1.0, self.opacity]
@@ -298,10 +318,17 @@ class FluxSpaceViewer:
         except Exception:
             pass
 
+    def _add_surface(self):
+        """Add the best available surface geometry to the scene."""
+        if self.mesh is not None:
+            self.scene_widget.scene.add_geometry("surface", self.mesh, self.mesh_mat)
+        elif self.surface_pcd is not None:
+            self.scene_widget.scene.add_geometry("surface", self.surface_pcd, self.surface_pcd_mat)
+
     def _build_scene(self):
         self.scene_widget.scene.clear_geometry()
-        if self.mesh is not None and self.chk_mesh.checked:
-            self.scene_widget.scene.add_geometry("surface", self.mesh, self.mesh_mat)
+        if self.chk_mesh.checked:
+            self._add_surface()
         self._rebuild_heat()
         self._on_reframe()
 
@@ -337,8 +364,8 @@ class FluxSpaceViewer:
     # --- Callbacks ---
     def _on_toggle_mesh(self, checked: bool):
         self._safe_remove("surface")
-        if checked and self.mesh is not None:
-            self.scene_widget.scene.add_geometry("surface", self.mesh, self.mesh_mat)
+        if checked:
+            self._add_surface()
 
     def _on_toggle_heat(self, checked: bool):
         self._safe_remove("heat")
@@ -357,8 +384,11 @@ class FluxSpaceViewer:
     def _on_reframe(self):
         """Frame the camera around all visible geometry."""
         geoms = []
-        if self.chk_mesh.checked and self.mesh is not None:
-            geoms.append(self.mesh)
+        if self.chk_mesh.checked:
+            if self.mesh is not None:
+                geoms.append(self.mesh)
+            elif self.surface_pcd is not None:
+                geoms.append(self.surface_pcd)
         if self._heat_geom is not None:
             geoms.append(self._heat_geom)
 
@@ -366,6 +396,8 @@ class FluxSpaceViewer:
         if not geoms:
             if self.mesh is not None:
                 geoms.append(self.mesh)
+            elif self.surface_pcd is not None:
+                geoms.append(self.surface_pcd)
             pc_any = _threshold_point_cloud(
                 self.volume, self.origin, self.voxel_size, float(np.min(self.volume))
             )
@@ -412,20 +444,33 @@ def main() -> int:
             return 2
         run = None
 
-    # --- Mesh path ---
+    # --- Mesh path (prefer clean over raw) ---
+    mesh = None
+    surface_pcd = None
+
     if args.mesh:
-        mesh_path = Path(args.mesh).expanduser().resolve()
+        mesh = _load_mesh(Path(args.mesh).expanduser().resolve())
     elif run:
-        candidates = [
-            run / "processed" / "open3d_mesh.ply",
+        mesh_candidates = [
             run / "processed" / "open3d_mesh_clean.ply",
+            run / "processed" / "open3d_mesh.ply",
             run / "exports" / "open3d_mesh.ply",
         ]
-        mesh_path = next((p for p in candidates if p.exists()), candidates[0])
-    else:
-        mesh_path = Path("open3d_mesh.ply")
+        for mp in mesh_candidates:
+            mesh = _load_mesh(mp)
+            if mesh is not None:
+                break
 
-    mesh = _load_mesh(mesh_path)
+    # Point cloud fallback (used when mesh toggle is on but no mesh available)
+    if mesh is None and run:
+        pcd_candidates = [
+            run / "processed" / "open3d_pcd_clean.ply",
+            run / "processed" / "open3d_pcd_raw.ply",
+        ]
+        for pp in pcd_candidates:
+            surface_pcd = _load_point_cloud(pp)
+            if surface_pcd is not None:
+                break
 
     # --- Volume path ---
     if args.volume:
@@ -451,12 +496,14 @@ def main() -> int:
         traceback.print_exc()
         return 2
 
-    if mesh is None:
-        print("  (No mesh loaded — heatmap-only mode)")
+    if mesh is None and surface_pcd is None:
+        print("  (No geometry loaded — heatmap-only mode)")
+    elif mesh is None:
+        print("  (No mesh — using point cloud for surface)")
     print(f"  Starting viewer...")
 
     gui.Application.instance.initialize()
-    FluxSpaceViewer(args.title, mesh, volume, origin, voxel_size)
+    FluxSpaceViewer(args.title, mesh, volume, origin, voxel_size, surface_pcd=surface_pcd)
     gui.Application.instance.run()
     return 0
 
