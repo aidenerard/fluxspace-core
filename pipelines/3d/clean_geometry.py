@@ -100,6 +100,8 @@ def parse_args() -> argparse.Namespace:
     g4 = p.add_argument_group("trajectory crop")
     g4.add_argument("--trajectory", default="", help="Path to trajectory CSV")
     g4.add_argument("--crop-from-trajectory", action="store_true", default=False)
+    g4.add_argument("--no-traj-crop", action="store_true", default=False,
+                    help="Force skip trajectory crop even if trajectory is valid")
     g4.add_argument("--crop-margin", type=float, default=0.25,
                     help="Metres to expand trajectory AABB (default: 0.25)")
     g4.add_argument("--crop-z-min", type=float, default=None)
@@ -134,37 +136,67 @@ def main() -> int:
     # ── Trajectory crop ───────────────────────────────────────────────────
     n_after_crop = n_input
     crop_applied = False
+    pcd_before_crop = pcd  # keep a reference for fallback
 
-    if args.crop_from_trajectory and args.trajectory:
+    if args.no_traj_crop:
+        print("  Trajectory crop skipped (--no-traj-crop).")
+    elif args.crop_from_trajectory and args.trajectory:
         traj_xyz = _load_trajectory_xyz(Path(args.trajectory))
         if traj_xyz is not None and len(traj_xyz) > 0:
-            lo = traj_xyz.min(axis=0) - args.crop_margin
-            hi = traj_xyz.max(axis=0) + args.crop_margin
-            if args.crop_z_min is not None:
-                lo[2] = args.crop_z_min
-            if args.crop_z_max is not None:
-                hi[2] = args.crop_z_max
-            print(f"  Trajectory crop: lo={lo.tolist()}, hi={hi.tolist()}")
-            bb = o3d.geometry.AxisAlignedBoundingBox(lo, hi)
-            pcd = pcd.crop(bb)
-            n_after_crop = len(pcd.points)
-            crop_applied = True
-            print(f"  After trajectory crop: {n_after_crop:,} points")
+            # Filter out any NaN/inf rows in the trajectory itself
+            finite_mask = np.isfinite(traj_xyz).all(axis=1)
+            traj_xyz = traj_xyz[finite_mask]
+
+            if len(traj_xyz) < 2:
+                print(f"  WARNING: Only {len(traj_xyz)} finite trajectory point(s) "
+                      f"(need >= 2). Skipping trajectory crop.")
+            else:
+                lo = traj_xyz.min(axis=0) - args.crop_margin
+                hi = traj_xyz.max(axis=0) + args.crop_margin
+                if args.crop_z_min is not None:
+                    lo[2] = args.crop_z_min
+                if args.crop_z_max is not None:
+                    hi[2] = args.crop_z_max
+
+                if not (np.isfinite(lo).all() and np.isfinite(hi).all()):
+                    print(f"  WARNING: trajectory bounds invalid (lo={lo.tolist()}, "
+                          f"hi={hi.tolist()}). Skipping trajectory crop.")
+                elif np.any(lo >= hi):
+                    print(f"  WARNING: trajectory bounds degenerate (lo >= hi). "
+                          f"Skipping trajectory crop.")
+                else:
+                    print(f"  Trajectory crop: lo={lo.tolist()}, hi={hi.tolist()}")
+                    bb = o3d.geometry.AxisAlignedBoundingBox(lo, hi)
+                    pcd_cropped = pcd.crop(bb)
+                    n_after_crop = len(pcd_cropped.points)
+                    if n_after_crop < 100:
+                        print(f"  WARNING: Trajectory crop left only {n_after_crop} points. "
+                              f"Falling back to uncropped cloud ({n_input:,} points).")
+                        n_after_crop = n_input
+                    else:
+                        pcd = pcd_cropped
+                        crop_applied = True
+                        print(f"  After trajectory crop: {n_after_crop:,} points")
         else:
             print("  WARNING: Could not load trajectory; skipping trajectory crop.")
     elif args.crop_aabb is not None:
         lo = np.array(args.crop_aabb[:3])
         hi = np.array(args.crop_aabb[3:])
-        print(f"  Manual AABB crop: lo={lo.tolist()}, hi={hi.tolist()}")
-        bb = o3d.geometry.AxisAlignedBoundingBox(lo, hi)
-        pcd = pcd.crop(bb)
-        n_after_crop = len(pcd.points)
-        crop_applied = True
-        print(f"  After manual crop: {n_after_crop:,} points")
-
-    if n_after_crop < 100:
-        print(f"ERROR: Only {n_after_crop} points remain after crop. Aborting.", file=sys.stderr)
-        return 2
+        if not (np.isfinite(lo).all() and np.isfinite(hi).all()):
+            print(f"  WARNING: Manual AABB bounds invalid. Skipping crop.")
+        else:
+            print(f"  Manual AABB crop: lo={lo.tolist()}, hi={hi.tolist()}")
+            bb = o3d.geometry.AxisAlignedBoundingBox(lo, hi)
+            pcd_cropped = pcd.crop(bb)
+            n_after_crop = len(pcd_cropped.points)
+            if n_after_crop < 100:
+                print(f"  WARNING: Manual crop left only {n_after_crop} points. "
+                      f"Falling back to uncropped cloud ({n_input:,} points).")
+                n_after_crop = n_input
+            else:
+                pcd = pcd_cropped
+                crop_applied = True
+                print(f"  After manual crop: {n_after_crop:,} points")
 
     # ── Voxel downsample ──────────────────────────────────────────────────
     vs = args.voxel_size
