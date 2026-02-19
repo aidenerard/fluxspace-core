@@ -141,6 +141,91 @@ python3 pipelines/3d/view_scan_toggle.py --run data/runs/run_cam_only_20260210_1
 
 ---
 
+## Recommended: OAK-D VIO pose (IMU + depth)
+
+Frame-to-frame RGB-D odometry often produces "confetti" meshes (noisy, misaligned geometry) because it fails on textureless surfaces and accumulates drift. The **VIO capture** script (`capture_oak_rgbd_vio.py`) produces far more stable trajectories by using the OAK-D Lite's onboard IMU (gyroscope + accelerometer) for rotation and depth-based optical flow for translation.
+
+### How it works
+
+1. **IMU orientation** — The BMI270 gyroscope is integrated at ~200 Hz on the host with a complementary filter that corrects pitch/roll drift using the accelerometer's gravity vector. This gives reliable rotation even on textureless scenes.
+2. **Depth-based translation** — For each frame, optical flow tracks features between consecutive images. Matched features are unprojected to 3D using the depth map, and the translation is solved given the known rotation from the IMU (robust median estimator).
+3. **trajectory_device.csv** — Written alongside the normal `color/`, `depth/`, `timestamps.csv`, and `intrinsics.json`. The reconstruction script automatically uses it when present.
+
+### Quick start (VIO capture → reconstruct)
+
+```bash
+# 1. Capture with VIO (writes trajectory_device.csv alongside frames)
+python3 pipelines/3d/capture_oak_rgbd_vio.py --out "$RUN_DIR/raw/oak_rgbd"
+
+# 2. Reconstruct (auto-detects trajectory_device.csv → uses device poses)
+./tools/3d/run_all_3d.sh --latest --camera-only
+```
+
+The reconstruction script prints which pose source it uses:
+```
+  Auto-detected device trajectory: .../trajectory_device.csv
+  Pose source: device
+```
+
+### Explicit pose-source control
+
+```bash
+# Force device poses (fails if trajectory_device.csv missing):
+./tools/3d/run_all_3d.sh --latest --camera-only --pose-source device
+
+# Force frame-to-frame odometry (ignore trajectory_device.csv):
+./tools/3d/run_all_3d.sh --latest --camera-only --pose-source odom
+
+# Alias for --pose-source device:
+./tools/3d/run_all_3d.sh --latest --camera-only --use-device-pose
+```
+
+Or call the reconstruction script directly:
+
+```bash
+python3 pipelines/3d/open3d_reconstruct.py \
+  --in "$RUN_DIR/raw/oak_rgbd" \
+  --pose-source device \
+  --no-viz
+```
+
+### When to use VIO vs odometry
+
+| Scenario | Recommended |
+|----------|-------------|
+| Textureless surfaces (concrete, drywall) | VIO (`capture_oak_rgbd_vio.py`) |
+| Very short captures (< 10 frames) | Odometry (VIO needs time to initialise) |
+| OAK-D Lite without IMU (Kickstarter units) | Odometry (only option) |
+| Long captures (> 60 seconds) | VIO + consider loop closure / SLAM |
+
+### Troubleshooting VIO
+
+| Issue | Fix |
+|-------|-----|
+| "Could not open IMU queue" | Your OAK-D Lite may lack an IMU (Kickstarter batch). Use `capture_oak_rgbd.py` + odometry instead. |
+| Poor mesh despite VIO | Move slower; avoid motion blur. Check that `trajectory_device.csv` has reasonable position values (plot x,y,z over time). |
+| VIO yaw drift on long scans | The BMI270 gyroscope drifts ~0.5°/min in yaw. For 30–60 s scans this is fine. For longer scans, consider a SLAM backend. |
+| Scene lacks texture (translation fails) | Translation estimation needs some visual features. VIO still gives good rotation; translation may be noisy. Try `--depth-trunc 1.5` to focus on nearby geometry. |
+
+### `capture_oak_rgbd_vio.py` CLI flags
+
+| Flag | Description |
+|------|-------------|
+| `--out DIR` | Output directory (e.g. `$RUN_DIR/raw/oak_rgbd`). Required. |
+| `--fps N` | Camera FPS (default: 15). |
+| `--no-preview` | Disable OpenCV preview windows (headless / Pi). |
+| `--save-imu` | Also write `imu_raw.csv` with raw accelerometer + gyroscope readings. |
+| `--imu-alpha F` | Complementary filter gyro trust (0–1, default: 0.98). Lower values trust accelerometer more (noisier but less drift). |
+
+### `open3d_reconstruct.py` pose-source flags
+
+| Flag | Description |
+|------|-------------|
+| `--pose-source {auto,odom,device}` | `auto` (default): use `trajectory_device.csv` if present, else odometry. `device`: require external trajectory. `odom`: frame-to-frame RGB-D odometry. |
+| `--trajectory PATH` | Path to external trajectory CSV (default: `<input_dir>/trajectory_device.csv`). |
+
+---
+
 ## Quickstart (step-by-step, all workflows)
 
 ```bash
@@ -192,16 +277,17 @@ Expected outputs: `processed/trajectory.csv`, `processed/mag_world.csv`, `export
   Pi + MMC5983MA (rigid ruler ~30 cm)            + optional Pi + MMC5983MA
        |                                              |
        v                                              v
-  3D scan app                                    capture_oak_rgbd.py
-  (export Raw Data / .db)                         → oak_capture/ (color, depth, timestamps)
-       |                                              |
-       v                                              v
+  3D scan app                                    capture_oak_rgbd_vio.py  (recommended)
+  (export Raw Data / .db)                         → oak_capture/ (color, depth, timestamps,
+       |                                              intrinsics, trajectory_device.csv)
+       v                                              |
   mag_to_csv_v2.py (or mag_calibrate_zero_logger.py) for mag capture (both options)
 
 [PROCESSING DAY]
   Option A:                                       Option B:
   polycam_raw_to_trajectory.py                    open3d_reconstruct.py
     OR rtabmap_poses_to_trajectory.py               → trajectory.csv + open3d_mesh.ply
+                                                    (auto-uses trajectory_device.csv if present)
        |                                              |
        v                                              v
   trajectory.csv (t_rel_s, x, y, z, qx, qy, qz, qw)
@@ -267,7 +353,8 @@ data/runs/run_20250123_1430/
 │       ├── color/color_*.jpg
 │       ├── depth/depth_*.png    # 16-bit depth in mm
 │       ├── timestamps.csv       # idx, t_wall_s, t_rgb_dev_ms, t_depth_dev_ms
-│       └── intrinsics.json      # fx, fy, cx, cy (from OAK-D calibration)
+│       ├── intrinsics.json      # fx, fy, cx, cy (from OAK-D calibration)
+│       └── trajectory_device.csv # (VIO only) t_rel_s, x, y, z, qx, qy, qz, qw
 ├── processed/
 │   ├── trajectory.csv           # t_rel_s, x, y, z, qx, qy, qz, qw
 │   ├── open3d_mesh_raw.ply      # Raw TSDF mesh (from open3d_reconstruct)
@@ -425,7 +512,8 @@ Steps 4–5 are **identical** to the Polycam / RTAB-Map workflow — the OAK-D s
 | Script | Reads | Writes |
 |--------|-------|--------|
 | `capture_oak_rgbd.py` | OAK-D sensor (USB) | `raw/oak_rgbd/`: `color/`, `depth/`, `timestamps.csv`, `intrinsics.json` |
-| `open3d_reconstruct.py` | `raw/oak_rgbd/` frames | `processed/trajectory.csv`, `processed/open3d_mesh_raw.ply`, `processed/open3d_pcd_raw.ply`, `processed/reconstruction_report.json` |
+| `capture_oak_rgbd_vio.py` | OAK-D sensor + IMU | `raw/oak_rgbd/`: above + `trajectory_device.csv`, optional `imu_raw.csv` |
+| `open3d_reconstruct.py` | `raw/oak_rgbd/` frames (+ optional `trajectory_device.csv`) | `processed/trajectory.csv`, `processed/open3d_mesh_raw.ply`, `processed/open3d_pcd_raw.ply`, `processed/reconstruction_report.json` |
 | `clean_geometry.py` | `processed/open3d_pcd_raw.ply`, `processed/open3d_mesh_raw.ply` | `processed/open3d_pcd_clean.ply`, `processed/open3d_mesh_clean.ply`, `processed/cleaning_report.json` |
 
 ### CLI flags
@@ -686,7 +774,7 @@ If a script needs a missing dependency, it will print a clear error and the pack
 | **scikit-learn missing** | `pip install scikit-learn` (required for GPR method). |
 | **pyvista add_volume / scalar_range error** | Fixed in this repo: script uses `clim` (not `scalar_range`). Update the script or re-pull. |
 | **Headless / no GUI** | Use `--screenshot --no-show` for 3D screenshot only; use `--show-slices --save --no-show` for slice PNGs. |
-| **Geometry "confetti" / noise** | Run with `--quality high` or increase `--clean-sor-nb`. Use `--remove-plane` to drop the ground surface. |
+| **Geometry "confetti" / noise** | Use `capture_oak_rgbd_vio.py` for VIO poses (much more stable). If already using VIO, try `--quality high` or increase `--clean-sor-nb`. Use `--remove-plane` to drop the ground surface. |
 | **Low odometry success rate** | Try `--every-n 2` to skip frames, or `--depth-trunc 1.5` if the scene is close-range. Check `reconstruction_report.json` for exact rate. |
 | **Trajectory has NaN poses** | `open3d_reconstruct.py` now filters NaNs. `clean_geometry.py` falls back to PCD bounds if trajectory crop is invalid. |
 | **Cleaning takes too long** | Use `--quality fast` or `--skip-clean`. Lower quality reduces SOR neighbours and increases downsample voxel size. |
@@ -695,7 +783,9 @@ If a script needs a missing dependency, it will print a clear error and the pack
 | **OAK-D not detected** | Ensure USB 3 cable is plugged directly into Mac (not a hub). Run `python -c "import depthai; print(depthai.Device.getAllAvailableDevices())"` to check. |
 | **OAK-D capture slow / laggy** | Reduce colour resolution or depth output size in `capture_oak_rgbd.py`. Ensure USB 3 (not USB 2). |
 | **Open3D mesh is empty or garbled** | Check that intrinsics roughly match the camera. Use real OAK-D calibration (see explanation doc). Ensure depth images are 16-bit PNG in mm. |
-| **Open3D odometry drift** | Expected for long captures with frame-to-frame only. Use a SLAM backend for better poses. |
+| **Open3D odometry drift** | Expected for long captures with frame-to-frame only. Use `capture_oak_rgbd_vio.py` for IMU-based VIO, or a SLAM backend for better poses. |
+| **VIO: IMU not detected** | Some OAK-D Lite units (Kickstarter batch) lack an IMU. The script falls back to depth-only capture. Use `capture_oak_rgbd.py` + odometry as an alternative. |
+| **VIO: poor mesh / drift** | Move slowly and steadily; avoid fast rotation or motion blur. Check `trajectory_device.csv` for plausible x,y,z values. If yaw drifts, keep scans under 60 seconds. |
 | **`depthai` install fails** | See [Luxonis docs](https://docs.luxonis.com/software/depthai/manual-install/). On macOS, `pip install depthai` should work. On Pi, may need `libusb` dev packages. |
 
 ---
@@ -705,6 +795,7 @@ If a script needs a missing dependency, it will print a clear error and the pack
 | Step | Output | Columns / content |
 |------|--------|-------------------|
 | OAK-D capture | `raw/oak_rgbd/` | `color/`, `depth/`, `timestamps.csv`, `intrinsics.json` |
+| OAK-D VIO capture | `raw/oak_rgbd/` | above + `trajectory_device.csv` (per-frame device pose) |
 | Trajectory (any source) | `processed/trajectory.csv` | `t_rel_s, x, y, z, qx, qy, qz, qw` |
 | Reconstruction (OAK-D) | `processed/open3d_mesh_raw.ply` | Raw TSDF triangle mesh |
 | | `processed/open3d_pcd_raw.ply` | Raw TSDF point cloud |
@@ -729,6 +820,7 @@ Detailed docs for each 3D pipeline script:
 |--------|-------------|
 | **OAK-D capture + Open3D** | |
 | `capture_oak_rgbd` | [capture_oak_rgbd_explanation.md](capture_oak_rgbd_explanation.md) |
+| `capture_oak_rgbd_vio` | VIO capture: IMU (gyro+accel) + depth optical flow for stable trajectory |
 | `open3d_reconstruct` | [open3d_reconstruct_explanation.md](open3d_reconstruct_explanation.md) |
 | **Trajectory extraction** | |
 | `polycam_raw_to_trajectory` | [polycam_raw_to_trajectory_explanation.md](polycam_raw_to_trajectory_explanation.md) |

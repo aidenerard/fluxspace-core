@@ -52,6 +52,7 @@ RECON_VOXEL=""         # reconstruction voxel size override
 ODO_METHOD=""          # odometry method override
 SAVE_GLB=false         # export GLB files
 CAMERA_ONLY=false      # skip all mag-related steps
+POSE_SOURCE=""         # auto | odom | device (empty = auto)
 
 # ── Usage ──────────────────────────────────────────────────────────────────
 usage() {
@@ -68,6 +69,8 @@ Pipeline mode:
                         Auto-detected if raw/mag_run.csv is missing.
 
 Reconstruction options:
+  --pose-source <src>   auto | odom | device (default: auto)
+  --use-device-pose     Alias for --pose-source device
   --every-n <int>       Use every Nth frame (default: 1)
   --max-frames <int>    Stop reconstruction after N frames
   --depth-trunc <float> Max depth in metres (default: 3.0)
@@ -114,6 +117,11 @@ while [[ $# -gt 0 ]]; do
       MODE="new"; shift ;;
     --camera-only)
       CAMERA_ONLY=true; shift ;;
+    --pose-source)
+      [[ -z "${2:-}" ]] && die "--pose-source requires auto|odom|device"
+      POSE_SOURCE="$2"; shift 2 ;;
+    --use-device-pose)
+      POSE_SOURCE="device"; shift ;;
     --repo-root)
       [[ -z "${2:-}" ]] && die "--repo-root requires a path"
       REPO_ROOT="$2"; shift 2 ;;
@@ -367,11 +375,23 @@ run_step() {
 # ═══════════════════════════════════════════════════════════════════════════
 # Step 1: Open3D reconstruction
 # ═══════════════════════════════════════════════════════════════════════════
+
+# Auto-detect device trajectory for pose-source hint
+DETECTED_POSE_SRC="${POSE_SOURCE:-auto}"
+TRAJ_DEVICE="$OAK_DIR/trajectory_device.csv"
+if [[ "$DETECTED_POSE_SRC" == "auto" && -f "$TRAJ_DEVICE" ]]; then
+  info "Device trajectory found: $TRAJ_DEVICE (will use device poses)"
+elif [[ "$DETECTED_POSE_SRC" == "device" && ! -f "$TRAJ_DEVICE" ]]; then
+  warn "trajectory_device.csv not found; auto will fall back to odom"
+  DETECTED_POSE_SRC="auto"
+fi
+
 RECON_ARGS=(
   python3 pipelines/3d/open3d_reconstruct.py
   --in "$OAK_DIR"
   --out-dir "$RUN_DIR/processed"
   --no-viz
+  --pose-source "$DETECTED_POSE_SRC"
 )
 [[ -n "$EVERY_N" ]]     && RECON_ARGS+=(--every-n "$EVERY_N")
 [[ -n "$MAX_FRAMES" ]]  && RECON_ARGS+=(--max-frames "$MAX_FRAMES")
@@ -527,8 +547,12 @@ printf "${_G}══════════════════════�
 printf "${_G}  Done — 3D pipeline complete           ${_R}\n"
 printf "${_G}════════════════════════════════════════${_R}\n"
 printf "\n"
+POSE_LABEL="$DETECTED_POSE_SRC"
+[[ -f "$TRAJ_DEVICE" ]] && POSE_LABEL="device (trajectory_device.csv)"
+
 printf "  RUN_DIR      : %s\n" "$(_rel "$RUN_DIR")"
 printf "  Mode         : %s\n" "$PIPELINE_MODE"
+printf "  Pose source  : %s\n" "$POSE_LABEL"
 printf "  Geometry     : %s\n" "$GEOM_LABEL"
 [[ -f "$RUN_DIR/processed/open3d_pcd_raw.ply" ]] && \
 printf "  Raw pcd      : %s\n" "$(_rel "$RUN_DIR/processed/open3d_pcd_raw.ply")"

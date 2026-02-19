@@ -3,14 +3,20 @@
 open3d_reconstruct.py
 
 Reconstruct a 3D triangle mesh + point cloud from RGB + depth frames
-captured by capture_oak_rgbd.py, using Open3D TSDF volume integration
-and frame-to-frame RGB-D odometry.
+captured by capture_oak_rgbd.py or capture_oak_rgbd_vio.py, using
+Open3D TSDF volume integration.
 
-Inputs  (from capture_oak_rgbd.py output):
+Pose sources (--pose-source):
+  auto   — use trajectory_device.csv if present, else RGB-D odometry
+  device — load trajectory_device.csv (from VIO capture) as external poses
+  odom   — compute frame-to-frame RGB-D odometry (original behaviour)
+
+Inputs  (from capture_oak_rgbd.py / capture_oak_rgbd_vio.py output):
   color/color_*.jpg       colour frames
   depth/depth_*.png       16-bit depth PNGs (mm)
   timestamps.csv          idx, t_wall_s, t_rgb_dev_ms, t_depth_dev_ms
   intrinsics.json         (optional) fx, fy, cx, cy, width, height
+  trajectory_device.csv   (optional) t_rel_s, x, y, z, qx, qy, qz, qw
 
 Outputs (default: RUN_DIR/processed/):
   trajectory.csv          t_rel_s, x, y, z, qx, qy, qz, qw
@@ -80,6 +86,55 @@ def rotation_matrix_to_quat(R: np.ndarray) -> np.ndarray:
     return q / np.linalg.norm(q)
 
 
+def quat_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
+    """Convert quaternion (x, y, z, w) to 3×3 rotation matrix."""
+    x, y, z, w = q
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ])
+
+
+def load_device_trajectory(path: Path) -> list[np.ndarray]:
+    """Load trajectory_device.csv and return a list of 4×4 camera-to-world poses.
+
+    Each row has columns: t_rel_s, x, y, z, qx, qy, qz, qw.
+    Returns one 4×4 matrix per row (in file order).
+    """
+    poses: list[np.ndarray] = []
+    with open(path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                x  = float(row["x"])
+                y  = float(row["y"])
+                z  = float(row["z"])
+                qx = float(row["qx"])
+                qy = float(row["qy"])
+                qz = float(row["qz"])
+                qw = float(row["qw"])
+            except (KeyError, ValueError):
+                poses.append(np.eye(4))
+                continue
+            vals = [x, y, z, qx, qy, qz, qw]
+            if not np.isfinite(vals).all():
+                poses.append(np.eye(4))
+                continue
+            q = np.array([qx, qy, qz, qw])
+            q_norm = np.linalg.norm(q)
+            if q_norm < 1e-8:
+                poses.append(np.eye(4))
+                continue
+            q = q / q_norm
+            R = quat_to_rotation_matrix(q)
+            T = np.eye(4)
+            T[:3, :3] = R
+            T[:3, 3] = [x, y, z]
+            poses.append(T)
+    return poses
+
+
 def load_intrinsics(in_dir: Path, width: int, height: int) -> o3d.camera.PinholeCameraIntrinsic:
     intr_path = in_dir / "intrinsics.json"
     fx, fy = APPROX_FX, APPROX_FY
@@ -135,6 +190,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out", default="", help="Override: explicit trajectory.csv path.")
     p.add_argument("--mesh", default="", help="Override: explicit mesh PLY path.")
 
+    g_pose = p.add_argument_group("pose source")
+    g_pose.add_argument("--pose-source", choices=["auto", "odom", "device"],
+                        default="auto",
+                        help="auto: use trajectory_device.csv if present, else odom. "
+                             "device: require external trajectory. "
+                             "odom: frame-to-frame RGB-D odometry (default: auto)")
+    g_pose.add_argument("--trajectory", default="",
+                        help="Path to external trajectory CSV "
+                             "(default: <input_dir>/trajectory_device.csv)")
+
     g = p.add_argument_group("reconstruction tuning")
     g.add_argument("--voxel-size", type=float, default=DEFAULT_VOXEL_LENGTH,
                    help=f"TSDF voxel size in metres (default: {DEFAULT_VOXEL_LENGTH})")
@@ -149,7 +214,7 @@ def parse_args() -> argparse.Namespace:
     g.add_argument("--max-frames", type=int, default=0,
                    help="Stop after N frames (default: 0 = no limit)")
     g.add_argument("--odometry-method", choices=["hybrid", "color"], default="hybrid",
-                   help="Odometry Jacobian method (default: hybrid)")
+                   help="Odometry Jacobian method for odom mode (default: hybrid)")
 
     g2 = p.add_argument_group("output options")
     g2.add_argument("--save-glb", action="store_true",
@@ -223,13 +288,45 @@ def main() -> int:
         color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
     )
 
-    # --- Odometry Jacobian ---
-    if args.odometry_method == "color":
-        jacobian = o3d.pipelines.odometry.RGBDOdometryJacobianFromColorTerm()
-    else:
-        jacobian = o3d.pipelines.odometry.RGBDOdometryJacobianFromHybridTerm()
+    # --- Resolve pose source ---
+    pose_source = args.pose_source  # auto | odom | device
+    device_poses: list[np.ndarray] | None = None
 
-    # --- Odometry + TSDF integration ---
+    traj_device_path = Path(args.trajectory) if args.trajectory else in_dir / "trajectory_device.csv"
+
+    if pose_source == "auto":
+        if traj_device_path.exists():
+            pose_source = "device"
+            print(f"  Auto-detected device trajectory: {traj_device_path}")
+        else:
+            pose_source = "odom"
+            print("  No trajectory_device.csv found; using RGB-D odometry")
+    elif pose_source == "device":
+        if not traj_device_path.exists():
+            print(f"ERROR: --pose-source device but trajectory not found: {traj_device_path}",
+                  file=sys.stderr)
+            return 2
+
+    if pose_source == "device":
+        all_device_poses = load_device_trajectory(traj_device_path)
+        print(f"  Loaded {len(all_device_poses)} device poses from {traj_device_path.name}")
+        device_poses = [all_device_poses[i] for i in indices if i < len(all_device_poses)]
+        n_missing = n_used - len(device_poses)
+        if n_missing > 0:
+            warnings_list.append(f"{n_missing} frames lack device poses (padded with identity)")
+            device_poses.extend([np.eye(4)] * n_missing)
+
+    print(f"  Pose source: {pose_source}")
+
+    # --- Odometry Jacobian (only used if pose_source == odom) ---
+    jacobian = None
+    if pose_source == "odom":
+        if args.odometry_method == "color":
+            jacobian = o3d.pipelines.odometry.RGBDOdometryJacobianFromColorTerm()
+        else:
+            jacobian = o3d.pipelines.odometry.RGBDOdometryJacobianFromHybridTerm()
+
+    # --- Integration loop ---
     prev_rgbd = None
     prev_pose = np.eye(4)
     frame_poses: list[np.ndarray] = []
@@ -248,7 +345,9 @@ def main() -> int:
             convert_rgb_to_intensity=False,
         )
 
-        if prev_rgbd is not None:
+        if pose_source == "device" and device_poses is not None:
+            prev_pose = device_poses[seq_i]
+        elif pose_source == "odom" and prev_rgbd is not None and jacobian is not None:
             option = o3d.pipelines.odometry.OdometryOption()
             success, trans, info = o3d.pipelines.odometry.compute_rgbd_odometry(
                 prev_rgbd, rgbd, intr, np.eye(4), jacobian, option,
@@ -269,12 +368,16 @@ def main() -> int:
 
     odo_total = odo_success + odo_fail
     odo_rate = odo_success / odo_total if odo_total > 0 else 1.0
-    print(f"  Integrated all {n_used} frames.  Odometry: {odo_success}/{odo_total} "
-          f"succeeded ({odo_rate:.0%})")
-    if odo_rate < 0.3:
-        w = f"Low odometry success rate ({odo_rate:.0%}). Geometry may be poor."
-        warnings_list.append(w)
-        print(f"  WARNING: {w}")
+
+    if pose_source == "odom":
+        print(f"  Integrated all {n_used} frames.  Odometry: {odo_success}/{odo_total} "
+              f"succeeded ({odo_rate:.0%})")
+        if odo_rate < 0.3:
+            w = f"Low odometry success rate ({odo_rate:.0%}). Geometry may be poor."
+            warnings_list.append(w)
+            print(f"  WARNING: {w}")
+    else:
+        print(f"  Integrated all {n_used} frames using device poses.")
 
     # --- Extract geometry ---
     mesh = volume.extract_triangle_mesh()
@@ -359,19 +462,16 @@ def main() -> int:
 
     # --- Write reconstruction_report.json ---
     elapsed = time.monotonic() - t_start
-    report = {
+    report: dict = {
         "input_dir": str(in_dir),
         "n_frames_total": n_total,
         "n_frames_used": n_used,
         "every_n": every_n,
+        "pose_source": pose_source,
         "voxel_size": args.voxel_size,
         "sdf_trunc": sdf_trunc,
         "depth_trunc": depth_trunc,
         "depth_scale": depth_scale,
-        "odometry_method": args.odometry_method,
-        "odometry_success_count": odo_success,
-        "odometry_failure_count": odo_fail,
-        "odometry_success_rate": round(odo_rate, 4),
         "nan_poses_filtered": n_nan_poses,
         "point_count_raw": len(pcd_raw.points) if pcd_raw else 0,
         "mesh_vertex_count": len(mesh.vertices),
@@ -381,6 +481,14 @@ def main() -> int:
         "elapsed_seconds": round(elapsed, 1),
         "warnings": warnings_list,
     }
+    if pose_source == "odom":
+        report["odometry_method"] = args.odometry_method
+        report["odometry_success_count"] = odo_success
+        report["odometry_failure_count"] = odo_fail
+        report["odometry_success_rate"] = round(odo_rate, 4)
+    elif pose_source == "device":
+        report["device_trajectory_file"] = str(traj_device_path)
+        report["device_pose_count"] = len(device_poses) if device_poses else 0
     report_path = out_dir / "reconstruction_report.json"
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
