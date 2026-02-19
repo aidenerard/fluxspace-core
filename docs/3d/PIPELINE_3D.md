@@ -820,7 +820,7 @@ Detailed docs for each 3D pipeline script:
 |--------|-------------|
 | **OAK-D capture + Open3D** | |
 | `capture_oak_rgbd` | [capture_oak_rgbd_explanation.md](capture_oak_rgbd_explanation.md) |
-| `capture_oak_rgbd_vio` | VIO capture: IMU (gyro+accel) + depth optical flow for stable trajectory |
+| `capture_oak_rgbd_vio` | [capture_oak_rgbd_vio_explanation.md](capture_oak_rgbd_vio_explanation.md) |
 | `open3d_reconstruct` | [open3d_reconstruct_explanation.md](open3d_reconstruct_explanation.md) |
 | **Trajectory extraction** | |
 | `polycam_raw_to_trajectory` | [polycam_raw_to_trajectory_explanation.md](polycam_raw_to_trajectory_explanation.md) |
@@ -829,12 +829,12 @@ Detailed docs for each 3D pipeline script:
 | `fuse_mag_with_trajectory` | [fuse_mag_with_trajectory_explanation.md](fuse_mag_with_trajectory_explanation.md) |
 | `mag_world_to_voxel_volume` | [mag_world_to_voxel_volume_explanation.md](mag_world_to_voxel_volume_explanation.md) |
 | `visualize_3d_heatmap` | [visualize_3d_heatmap_explanation.md](visualize_3d_heatmap_explanation.md) |
-| `clean_geometry` | Automatic geometry cleaning: crop, denoise, cluster, mesh repair |
-| `validate_run` | Smoke test: checks a run directory for expected files and data quality |
-| `view_scan_toggle` | Interactive mesh + heatmap viewer (Open3D GUI) |
-| `run_paths` | Shared helper module for resolving run-folder paths |
+| `clean_geometry` | [clean_geometry_explanation.md](clean_geometry_explanation.md) |
+| `validate_run` | [validate_run_explanation.md](validate_run_explanation.md) |
+| `view_scan_toggle` | [view_scan_toggle_explanation.md](view_scan_toggle_explanation.md) |
+| `run_paths` | [run_paths_explanation.md](run_paths_explanation.md) |
 | **Shell tools** | |
-| `run_all_3d.sh` | One-command pipeline runner (`./tools/3d/run_all_3d.sh --help`) |
+| `run_all_3d.sh` | [run_all_3d_explanation.md](run_all_3d_explanation.md) |
 | `mag_calibrate_zero_logger` | [mag_calibrate_zero_logger_explanation.md](mag_calibrate_zero_logger_explanation.md) |
 | `mag_to_csv_v2` (2D, used for 3D capture) | [mag_to_csv_v2_explanation.md](mag_to_csv_v2_explanation.md) |
 | **GPR (optional)** | |
